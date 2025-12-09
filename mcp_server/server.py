@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import asyncio
 import logging
 import time
@@ -17,8 +18,13 @@ from mcp.server.session import ServerSession
 from .config import load_config
 
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "server.yaml"
-CONFIG = load_config(CONFIG_PATH)
+CONFIG_PATH = Path(
+    os.getenv(
+        "MCP_SERVER_CONFIG",
+        str(Path(__file__).resolve().parent.parent / "config" / "server.yaml"),
+    )
+)
+CONFIG = load_config(Path(CONFIG_PATH))
 
 
 class RateLimitError(Exception):
@@ -182,12 +188,15 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
 server_cfg = CONFIG.get("server", {})
 
+_server_host = os.getenv("MCP_SERVER_HOST", server_cfg.get("host", "127.0.0.1"))
+_server_port = int(os.getenv("MCP_SERVER_PORT", server_cfg.get("port", 9000)))
+
 mcp = FastMCP(
     server_cfg.get("name", "simple-gpt-mcp"),
     lifespan=lifespan,
     json_response=True,
-    host=server_cfg.get("host", "127.0.0.1"),
-    port=int(server_cfg.get("port", 9000)),
+    host=_server_host,
+    port=_server_port,
 )
 
 
@@ -965,4 +974,36 @@ async def file_metadata(
         actor_role=actor_role,
         payload=payload,
         timeout=10.0,
+    )
+
+@mcp.tool(
+    name="support.workflow",
+    description="Run the support workflow agent to handle a support request.",
+)
+async def support_workflow(
+    tenant_id: str,
+    message: str,
+    actor: str = "orchestrator",
+    actor_role: str = "Orchestrator",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    if ctx is None:
+        raise RuntimeError("Context is required")
+    payload: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "message": message,
+        "actor": actor,
+        "actor_role": actor_role,
+    }
+    return await _call_backend_tool(
+        ctx=ctx,
+        tool_name="support.workflow",
+        service="support",
+        method="POST",
+        path="/workflow",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload=payload,
+        timeout=30.0,
     )
