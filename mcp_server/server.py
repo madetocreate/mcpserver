@@ -1112,3 +1112,39 @@ async def backoffice_workflow(
         payload=payload,
         timeout=30.0,
     )
+
+@mcp.tool(
+    name="business.assistant",
+    description="Global Business Assistant: routes requests to support, marketing, website, backoffice and other tools via the guarded supervisor.",
+)
+async def business_assistant(
+    tenant_id: str,
+    message: str,
+    thread_id: Optional[str] = None,
+    channel: str = "chat",
+    actor: str = "user",
+    actor_role: str = "User-Agent",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    if ctx is None:
+        raise RuntimeError("Context is required")
+    payload: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "message": message,
+        "thread_id": thread_id,
+        "channel": channel,
+        "actor": actor,
+        "actor_role": actor_role,
+    }
+    return await _call_backend_tool(
+        ctx=ctx,
+        tool_name="business.assistant",
+        service="assistant",
+        method="POST",
+        path="/business",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload=payload,
+        timeout=60.0,
+    )

@@ -6,6 +6,7 @@ tenants:
       marketing: http://localhost:8010/marketing
       website: http://localhost:8010/website
       backoffice: http://localhost:8010/backoffice
+      assistant: http://localhost:8010/assistant
 security:
   tools:
     support.workflow:
@@ -27,6 +28,12 @@ security:
       access_mode: read
       user_approval_required: false
     backoffice.workflow:
+      allowed_roles:
+        - Orchestrator
+        - User-Agent
+      access_mode: read
+      user_approval_required: false
+    business.assistant:
       allowed_roles:
         - Orchestrator
         - User-Agent
