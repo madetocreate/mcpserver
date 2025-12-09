@@ -1007,3 +1007,108 @@ async def support_workflow(
         payload=payload,
         timeout=30.0,
     )
+
+
+@mcp.tool(
+    name="marketing.workflow",
+    description="Run the marketing workflow agent to handle marketing requests.",
+)
+async def marketing_workflow(
+    tenant_id: str,
+    message: str,
+    thread_id: Optional[str] = None,
+    actor: str = "orchestrator",
+    actor_role: str = "Orchestrator",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    if ctx is None:
+        raise RuntimeError("Context is required")
+    payload: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "message": message,
+        "thread_id": thread_id,
+        "actor": actor,
+        "actor_role": actor_role,
+    }
+    return await _call_backend_tool(
+        ctx=ctx,
+        tool_name="marketing.workflow",
+        service="marketing",
+        method="POST",
+        path="/workflow",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload=payload,
+        timeout=30.0,
+    )
+
+
+@mcp.tool(
+    name="website.workflow",
+    description="Run the website workflow agent to handle website widget conversations.",
+)
+async def website_workflow(
+    tenant_id: str,
+    message: str,
+    thread_id: Optional[str] = None,
+    actor: str = "orchestrator",
+    actor_role: str = "Orchestrator",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    if ctx is None:
+        raise RuntimeError("Context is required")
+    payload: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "message": message,
+        "thread_id": thread_id,
+        "actor": actor,
+        "actor_role": actor_role,
+    }
+    return await _call_backend_tool(
+        ctx=ctx,
+        tool_name="website.workflow",
+        service="website",
+        method="POST",
+        path="/workflow",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload=payload,
+        timeout=30.0,
+    )
+
+
+@mcp.tool(
+    name="backoffice.workflow",
+    description="Run the backoffice workflow agent to handle internal operations requests.",
+)
+async def backoffice_workflow(
+    tenant_id: str,
+    message: str,
+    thread_id: Optional[str] = None,
+    actor: str = "orchestrator",
+    actor_role: str = "Orchestrator",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    if ctx is None:
+        raise RuntimeError("Context is required")
+    payload: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "message": message,
+        "thread_id": thread_id,
+        "actor": actor,
+        "actor_role": actor_role,
+    }
+    return await _call_backend_tool(
+        ctx=ctx,
+        tool_name="backoffice.workflow",
+        service="backoffice",
+        method="POST",
+        path="/workflow",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload=payload,
+        timeout=30.0,
+    )
