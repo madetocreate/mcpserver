@@ -1,12 +1,12 @@
 tenants:
   default:
     services:
-      memory: http://localhost:8010/memory
-      support: http://localhost:8010/support
-      marketing: http://localhost:8010/marketing
-      website: http://localhost:8010/website
-      backoffice: http://localhost:8010/backoffice
-      assistant: http://localhost:8010/assistant
+      memory: http://localhost:8000/memory
+      support: http://localhost:8000/support
+      marketing: http://localhost:8000/marketing
+      website: http://localhost:8000/website
+      backoffice: http://localhost:8000/backoffice
+      assistant: http://localhost:8000/assistant
 security:
   tools:
     support.workflow:
