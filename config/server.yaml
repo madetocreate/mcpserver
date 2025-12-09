@@ -1,0 +1,174 @@
+version: "1"
+
+server:
+  name: "simple-gpt-mcp"
+  description: "Tool gateway for Memory, CRM, Automation, Inbox and File services"
+  version: "0.1.0"
+  host: "127.0.0.1"
+  port: 9000
+  log_level: "INFO"
+  log_json: true
+
+tenants:
+  default:
+    description: "Default local tenant for development"
+    services:
+      memory: "http://localhost:8010"
+      crm: "http://localhost:8020"
+      automation: "http://localhost:8030"
+      inbox: "http://localhost:8040"
+      files: "http://localhost:8050"
+
+rate_limits:
+  default_per_minute: 60
+  per_tool:
+    memory.search: 120
+    memory.write: 60
+    memory.telemetry: 30
+    crm.lookup_customer: 60
+    crm.search_customers: 60
+    automation.trigger: 10
+    automation.run_flow: 10
+    inbox.send_message: 30
+
+security:
+  roles:
+    Orchestrator:
+      description: "Central orchestration agent"
+    Memory-Supervisor:
+      description: "Supervisor agent for Memory tools"
+    CRM-Supervisor:
+      description: "Supervisor agent for CRM tools"
+    Automation-Supervisor:
+      description: "Supervisor agent for Automation tools"
+    Inbox-Supervisor:
+      description: "Supervisor agent for Inbox tools"
+    User-Agent:
+      description: "End-user facing agent (e.g. Marketing)"
+  tools:
+    memory.search:
+      allowed_roles:
+        - "Orchestrator"
+        - "Memory-Supervisor"
+        - "User-Agent"
+      access_mode: "read"
+      user_approval_required: false
+    memory.write:
+      allowed_roles:
+        - "Orchestrator"
+        - "Memory-Supervisor"
+      access_mode: "write"
+      user_approval_required: false
+    memory.delete:
+      allowed_roles:
+        - "Orchestrator"
+        - "Memory-Supervisor"
+      access_mode: "write"
+      user_approval_required: true
+    memory.archive:
+      allowed_roles:
+        - "Orchestrator"
+        - "Memory-Supervisor"
+      access_mode: "write"
+      user_approval_required: true
+    memory.telemetry:
+      allowed_roles:
+        - "Orchestrator"
+        - "Memory-Supervisor"
+      access_mode: "read"
+      user_approval_required: false
+    crm.lookup_customer:
+      allowed_roles:
+        - "Orchestrator"
+        - "CRM-Supervisor"
+        - "User-Agent"
+      access_mode: "read"
+      user_approval_required: false
+    crm.search_customers:
+      allowed_roles:
+        - "Orchestrator"
+        - "CRM-Supervisor"
+      access_mode: "read"
+      user_approval_required: false
+    crm.create_note:
+      allowed_roles:
+        - "Orchestrator"
+        - "CRM-Supervisor"
+      access_mode: "write"
+      user_approval_required: false
+    crm.update_pipeline:
+      allowed_roles:
+        - "Orchestrator"
+        - "CRM-Supervisor"
+      access_mode: "write"
+      user_approval_required: true
+    automation.trigger:
+      allowed_roles:
+        - "Orchestrator"
+        - "Automation-Supervisor"
+      access_mode: "write"
+      user_approval_required: true
+    automation.validate:
+      allowed_roles:
+        - "Orchestrator"
+        - "Automation-Supervisor"
+      access_mode: "read"
+      user_approval_required: false
+    automation.run_flow:
+      allowed_roles:
+        - "Orchestrator"
+        - "Automation-Supervisor"
+      access_mode: "write"
+      user_approval_required: true
+    automation.list_workflows:
+      allowed_roles:
+        - "Orchestrator"
+        - "Automation-Supervisor"
+      access_mode: "read"
+      user_approval_required: false
+    inbox.get_thread:
+      allowed_roles:
+        - "Orchestrator"
+        - "Inbox-Supervisor"
+        - "User-Agent"
+      access_mode: "read"
+      user_approval_required: false
+    inbox.reply:
+      allowed_roles:
+        - "Orchestrator"
+        - "Inbox-Supervisor"
+        - "User-Agent"
+      access_mode: "write"
+      user_approval_required: false
+    inbox.list:
+      allowed_roles:
+        - "Orchestrator"
+        - "Inbox-Supervisor"
+        - "User-Agent"
+      access_mode: "read"
+      user_approval_required: false
+    inbox.send_message:
+      allowed_roles:
+        - "Orchestrator"
+        - "Inbox-Supervisor"
+        - "User-Agent"
+      access_mode: "write"
+      user_approval_required: true
+    file.search_local:
+      allowed_roles:
+        - "Orchestrator"
+        - "User-Agent"
+      access_mode: "read"
+      user_approval_required: false
+    file.preview:
+      allowed_roles:
+        - "Orchestrator"
+        - "User-Agent"
+      access_mode: "read"
+      user_approval_required: false
+    file.metadata:
+      allowed_roles:
+        - "Orchestrator"
+        - "User-Agent"
+      access_mode: "read"
+      user_approval_required: false

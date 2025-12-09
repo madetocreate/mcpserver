@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simple-gpt-mcp-server"
+version = "0.1.0"
+description = "MCP Tool Gateway for Memory, CRM, Automation, Inbox and File services"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.23.0",
+    "httpx>=0.28.0",
+    "pyyaml>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "fastapi[standard]>=0.115.0",
+    "uvicorn>=0.35.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[project.scripts]
+simple-gpt-mcp = "mcp_server.main:main"
+
+[tool.setuptools]
+packages = ["mcp_server"]
