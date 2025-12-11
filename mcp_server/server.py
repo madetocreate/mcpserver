@@ -229,18 +229,18 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
 server_cfg = CONFIG.get("server", {})
 
-_server_host = os.getenv("MCP_SERVER_HOST", server_cfg.get("host", "127.0.0.1"))
+# Use 0.0.0.0 to accept all hosts (including ngrok) without Host header patching
+_server_host = os.getenv("MCP_SERVER_HOST", server_cfg.get("host", "0.0.0.0"))
 _server_port = int(os.getenv("MCP_SERVER_PORT", server_cfg.get("port", 9000)))
 
+# FastMCP Server - keep it simple for maximum compatibility
+# Removed stateless_http and json_response initially to match minimal server approach
+# These can be re-added later if needed, but start with defaults
 mcp = FastMCP(
     server_cfg.get("name", "simple-gpt-mcp"),
     lifespan=lifespan,
-    json_response=True,
     host=_server_host,
     port=_server_port,
-    # Note: stateless_http=True should work, but testing shows session_id not returned
-    # FastMCP might need session_id in query params for stateless mode to work correctly
-    stateless_http=True,  # Enable stateless HTTP mode for OpenAI Agent Builder compatibility
 )
 
 
