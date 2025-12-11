@@ -523,7 +523,7 @@ async def _call_backend_tool(
 
 
 @mcp.tool(
-    name="memory.search",
+    name="memory_search",
     description="Search tenant-specific long-term memory for relevant items.",
 )
 async def memory_search(
@@ -537,7 +537,7 @@ async def memory_search(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="memory.search",
+        tool_name="memory_search",
         service="memory",
         method="POST",
         path="/search",
@@ -550,7 +550,7 @@ async def memory_search(
 
 
 @mcp.tool(
-    name="memory.write",
+    name="memory_write",
     description="Persist a new memory item for the tenant.",
 )
 async def memory_write(
@@ -572,7 +572,7 @@ async def memory_write(
         payload_data["correlation_id"] = correlation_id
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="memory.write",
+        tool_name="memory_write",
         service="memory",
         method="POST",
         path="/write",
@@ -585,7 +585,7 @@ async def memory_write(
 
 
 @mcp.tool(
-    name="memory.delete",
+    name="memory_delete",
     description="Delete or soft-delete a memory item.",
 )
 async def memory_delete(
@@ -599,7 +599,7 @@ async def memory_delete(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="memory.delete",
+        tool_name="memory_delete",
         service="memory",
         method="POST",
         path="/delete",
@@ -612,7 +612,7 @@ async def memory_delete(
 
 
 @mcp.tool(
-    name="memory.archive",
+    name="memory_archive",
     description="Archive a memory item so it no longer appears in default search.",
 )
 async def memory_archive(
@@ -625,7 +625,7 @@ async def memory_archive(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="memory.archive",
+        tool_name="memory_archive",
         service="memory",
         method="POST",
         path="/archive",
@@ -638,7 +638,7 @@ async def memory_archive(
 
 
 @mcp.tool(
-    name="memory.telemetry",
+    name="memory_telemetry",
     description="Return aggregate telemetry on memory usage and tool calls.",
 )
 async def memory_telemetry(
@@ -663,7 +663,7 @@ async def memory_telemetry(
 
 
 @mcp.tool(
-    name="crm.lookup_customer",
+    name="crm_lookup_customer",
     description="Lookup a single customer record by identifier.",
 )
 async def crm_lookup_customer(
@@ -675,7 +675,7 @@ async def crm_lookup_customer(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="crm.lookup_customer",
+        tool_name="crm_lookup_customer",
         service="crm",
         method="GET",
         path="/lookup_customer",
@@ -688,7 +688,7 @@ async def crm_lookup_customer(
 
 
 @mcp.tool(
-    name="crm.search_customers",
+    name="crm_search_customers",
     description="Search customers by free-text query or filters.",
 )
 async def crm_search_customers(
@@ -701,7 +701,7 @@ async def crm_search_customers(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="crm.search_customers",
+        tool_name="crm_search_customers",
         service="crm",
         method="POST",
         path="/search_customers",
@@ -714,7 +714,7 @@ async def crm_search_customers(
 
 
 @mcp.tool(
-    name="crm.create_note",
+    name="crm_create_note",
     description="Attach a note to a CRM customer record.",
 )
 async def crm_create_note(
@@ -727,7 +727,7 @@ async def crm_create_note(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="crm.create_note",
+        tool_name="crm_create_note",
         service="crm",
         method="POST",
         path="/create_note",
@@ -740,7 +740,7 @@ async def crm_create_note(
 
 
 @mcp.tool(
-    name="crm.update_pipeline",
+    name="crm_update_pipeline",
     description="Update the pipeline stage or value for an opportunity.",
 )
 async def crm_update_pipeline(
@@ -762,7 +762,7 @@ async def crm_update_pipeline(
         payload_data["value"] = value
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="crm.update_pipeline",
+        tool_name="crm_update_pipeline",
         service="crm",
         method="POST",
         path="/update_pipeline",
@@ -775,7 +775,7 @@ async def crm_update_pipeline(
 
 
 @mcp.tool(
-    name="automation.trigger",
+    name="automation_trigger",
     description="Trigger an automation workflow with a payload.",
 )
 async def automation_trigger(
@@ -789,7 +789,7 @@ async def automation_trigger(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="automation.trigger",
+        tool_name="automation_trigger",
         service="automation",
         method="POST",
         path="/trigger",
@@ -802,7 +802,7 @@ async def automation_trigger(
 
 
 @mcp.tool(
-    name="automation.validate",
+    name="automation_validate",
     description="Validate whether a workflow can run with the given payload.",
 )
 async def automation_validate(
@@ -815,7 +815,7 @@ async def automation_validate(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="automation.validate",
+        tool_name="automation_validate",
         service="automation",
         method="POST",
         path="/validate",
@@ -828,7 +828,7 @@ async def automation_validate(
 
 
 @mcp.tool(
-    name="automation.run_flow",
+    name="automation_run_flow",
     description="Start a long-running automation flow.",
 )
 async def automation_run_flow(
@@ -843,7 +843,7 @@ async def automation_run_flow(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="automation.run_flow",
+        tool_name="automation_run_flow",
         service="automation",
         method="POST",
         path="/run_flow",
@@ -856,7 +856,7 @@ async def automation_run_flow(
 
 
 @mcp.tool(
-    name="automation.list_workflows",
+    name="automation_list_workflows",
     description="List available automation workflows for the tenant.",
 )
 async def automation_list_workflows(
@@ -874,7 +874,7 @@ async def automation_list_workflows(
         payload_data["tag"] = tag
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="automation.list_workflows",
+        tool_name="automation_list_workflows",
         service="automation",
         method="GET",
         path="/workflows",
@@ -887,7 +887,7 @@ async def automation_list_workflows(
 
 
 @mcp.tool(
-    name="inbox.get_thread",
+    name="inbox_get_thread",
     description="Load a full inbox thread including messages and metadata.",
 )
 async def inbox_get_thread(
@@ -899,7 +899,7 @@ async def inbox_get_thread(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="inbox.get_thread",
+        tool_name="inbox_get_thread",
         service="inbox",
         method="GET",
         path="/thread",
@@ -912,7 +912,7 @@ async def inbox_get_thread(
 
 
 @mcp.tool(
-    name="inbox.reply",
+    name="inbox_reply",
     description="Reply to an existing inbox thread.",
 )
 async def inbox_reply(
@@ -927,7 +927,7 @@ async def inbox_reply(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="inbox.reply",
+        tool_name="inbox_reply",
         service="inbox",
         method="POST",
         path="/reply",
@@ -940,7 +940,7 @@ async def inbox_reply(
 
 
 @mcp.tool(
-    name="inbox.list",
+    name="inbox_list",
     description="List inbox threads for a folder.",
 )
 async def inbox_list(
@@ -953,7 +953,7 @@ async def inbox_list(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="inbox.list",
+        tool_name="inbox_list",
         service="inbox",
         method="GET",
         path="/list",
@@ -966,7 +966,7 @@ async def inbox_list(
 
 
 @mcp.tool(
-    name="inbox.send_message",
+    name="inbox_send_message",
     description="Send a new inbox message.",
 )
 async def inbox_send_message(
@@ -983,7 +983,7 @@ async def inbox_send_message(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="inbox.send_message",
+        tool_name="inbox_send_message",
         service="inbox",
         method="POST",
         path="/send",
@@ -996,7 +996,7 @@ async def inbox_send_message(
 
 
 @mcp.tool(
-    name="file.search_local",
+    name="file_search_local",
     description="Search local or indexed files by query.",
 )
 async def file_search_local(
@@ -1009,7 +1009,7 @@ async def file_search_local(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="file.search_local",
+        tool_name="file_search_local",
         service="files",
         method="POST",
         path="/search",
@@ -1022,7 +1022,7 @@ async def file_search_local(
 
 
 @mcp.tool(
-    name="file.preview",
+    name="file_preview",
     description="Get a textual preview for a file.",
 )
 async def file_preview(
@@ -1034,7 +1034,7 @@ async def file_preview(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="file.preview",
+        tool_name="file_preview",
         service="files",
         method="GET",
         path="/preview",
@@ -1047,7 +1047,7 @@ async def file_preview(
 
 
 @mcp.tool(
-    name="file.metadata",
+    name="file_metadata",
     description="Get structured metadata for a file.",
 )
 async def file_metadata(
@@ -1059,7 +1059,7 @@ async def file_metadata(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="file.metadata",
+        tool_name="file_metadata",
         service="files",
         method="GET",
         path="/metadata",
@@ -1072,7 +1072,7 @@ async def file_metadata(
 
 
 @mcp.tool(
-    name="support.supervisor",
+    name="support_supervisor",
     description="Run the support workflow agent to handle a support request.",
 )
 async def support_workflow(
@@ -1084,7 +1084,7 @@ async def support_workflow(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="support.supervisor",
+        tool_name="support_supervisor",
         service="support",
         method="POST",
         path="/workflow",
@@ -1097,7 +1097,7 @@ async def support_workflow(
 
 
 @mcp.tool(
-    name="marketing.supervisor",
+    name="marketing_supervisor",
     description="Run the marketing workflow agent to handle marketing requests.",
 )
 async def marketing_workflow(
@@ -1113,7 +1113,7 @@ async def marketing_workflow(
         payload_data["thread_id"] = thread_id
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="marketing.supervisor",
+        tool_name="marketing_supervisor",
         service="marketing",
         method="POST",
         path="/workflow",
@@ -1126,7 +1126,7 @@ async def marketing_workflow(
 
 
 @mcp.tool(
-    name="website.supervisor",
+    name="website_supervisor",
     description="Run the website workflow agent to handle website widget conversations.",
 )
 async def website_workflow(
@@ -1142,7 +1142,7 @@ async def website_workflow(
         payload_data["thread_id"] = thread_id
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="website.supervisor",
+        tool_name="website_supervisor",
         service="website",
         method="POST",
         path="/workflow",
@@ -1155,7 +1155,7 @@ async def website_workflow(
 
 
 @mcp.tool(
-    name="backoffice.supervisor",
+    name="backoffice_supervisor",
     description="Run the backoffice workflow agent to handle internal operations requests.",
 )
 async def backoffice_workflow(
@@ -1171,7 +1171,7 @@ async def backoffice_workflow(
         payload_data["thread_id"] = thread_id
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="backoffice.supervisor",
+        tool_name="backoffice_supervisor",
         service="backoffice",
         method="POST",
         path="/workflow",
@@ -1185,7 +1185,7 @@ async def backoffice_workflow(
 
 
 @mcp.tool(
-    name="observability.metrics",
+    name="observability_metrics",
     description="Return in-memory counters and average latency per MCP tool.",
 )
 async def observability_metrics(
@@ -1196,8 +1196,8 @@ async def observability_metrics(
 ) -> Dict[str, Any]:
     ctx = _require_context(ctx)
     app = ctx.request_context.lifespan_context
-    app.rate_limiter.check(tenant_id, "observability.metrics", actor)
-    app.permissions.ensure_allowed("observability.metrics", actor_role)
+    app.rate_limiter.check(tenant_id, "observability_metrics", actor)
+    app.permissions.ensure_allowed("observability_metrics", actor_role)
     snapshot = app.metrics.snapshot()
     return {
         "tenant_id": tenant_id,
@@ -1206,7 +1206,7 @@ async def observability_metrics(
 
 
 @mcp.tool(
-    name="observability.health",
+    name="observability_health",
     description="Return basic configuration and status information about the MCP server.",
 )
 async def observability_health(
@@ -1218,8 +1218,8 @@ async def observability_health(
 ) -> Dict[str, Any]:
     ctx = _require_context(ctx)
     app = ctx.request_context.lifespan_context
-    app.rate_limiter.check(tenant_id, "observability.health", actor)
-    app.permissions.ensure_allowed("observability.health", actor_role)
+    app.rate_limiter.check(tenant_id, "observability_health", actor)
+    app.permissions.ensure_allowed("observability_health", actor_role)
     server_cfg = app.config.get("server", {})
     tenants_cfg = app.config.get("tenants", {})
     now = datetime.now(timezone.utc).isoformat()
@@ -1239,7 +1239,7 @@ async def observability_health(
     return data
 
 @mcp.tool(
-    name="observability.discovery",
+    name="observability_discovery",
     description="List all available MCP tools and their parameters.",
 )
 async def observability_discovery(
@@ -1302,7 +1302,7 @@ async def observability_discovery(
 
 
 @mcp.tool(
-    name="memory.supervisor",
+    name="memory_supervisor",
     description="Run the memory workflow agent to handle memory-related requests.",
 )
 async def memory_supervisor(
@@ -1314,7 +1314,7 @@ async def memory_supervisor(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="memory.supervisor",
+        tool_name="memory_supervisor",
         service="memory",
         method="POST",
         path="/workflow",
@@ -1327,7 +1327,7 @@ async def memory_supervisor(
 
 
 @mcp.tool(
-    name="crm.supervisor",
+    name="crm_supervisor",
     description="Run the CRM workflow agent to handle CRM-related requests.",
 )
 async def crm_supervisor(
@@ -1339,7 +1339,7 @@ async def crm_supervisor(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="crm.supervisor",
+        tool_name="crm_supervisor",
         service="crm",
         method="POST",
         path="/workflow",
@@ -1352,7 +1352,7 @@ async def crm_supervisor(
 
 
 @mcp.tool(
-    name="automation.supervisor",
+    name="automation_supervisor",
     description="Run the automation workflow agent to orchestrate automation flows.",
 )
 async def automation_supervisor(
@@ -1364,7 +1364,7 @@ async def automation_supervisor(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="automation.supervisor",
+        tool_name="automation_supervisor",
         service="automation",
         method="POST",
         path="/workflow",
@@ -1377,7 +1377,7 @@ async def automation_supervisor(
 
 
 @mcp.tool(
-    name="inbox.supervisor",
+    name="inbox_supervisor",
     description="Run the inbox workflow agent to coordinate multi-channel inbox operations.",
 )
 async def inbox_supervisor(
@@ -1389,7 +1389,7 @@ async def inbox_supervisor(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="inbox.supervisor",
+        tool_name="inbox_supervisor",
         service="inbox",
         method="POST",
         path="/workflow",
@@ -1402,7 +1402,7 @@ async def inbox_supervisor(
 
 
 @mcp.tool(
-    name="file.supervisor",
+    name="file_supervisor",
     description="Run the file workflow agent to coordinate file search and preview operations.",
 )
 async def file_supervisor(
@@ -1414,7 +1414,7 @@ async def file_supervisor(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="file.supervisor",
+        tool_name="file_supervisor",
         service="files",
         method="POST",
         path="/workflow",
@@ -1427,7 +1427,7 @@ async def file_supervisor(
 
 
 @mcp.tool(
-    name="communications.supervisor",
+    name="communications_supervisor",
     description="Run the communications workflow agent to route and coordinate messages across channels.",
 )
 async def communications_supervisor(
@@ -1443,7 +1443,7 @@ async def communications_supervisor(
         payload_data["preferred_channel"] = preferred_channel
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="communications.supervisor",
+        tool_name="communications_supervisor",
         service="communications",
         method="POST",
         path="/workflow",

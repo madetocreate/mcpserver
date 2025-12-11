@@ -1,0 +1,1 @@
+{"ts":1765429252.2003908,"tool":"crm_supervisor","tenant":"demo-tenant","actor":"orchestrator","role":"Orchestrator","status":"backend_error","duration_ms":2.723275996686425,"error_code":"BACKEND_ERROR","correlation_id":"f84ff06c-9606-426a-95b1-9d77cd2ce11a","payload_size":198}
