@@ -238,6 +238,9 @@ mcp = FastMCP(
     json_response=True,
     host=_server_host,
     port=_server_port,
+    # Note: stateless_http=True should work, but testing shows session_id not returned
+    # FastMCP might need session_id in query params for stateless mode to work correctly
+    stateless_http=True,  # Enable stateless HTTP mode for OpenAI Agent Builder compatibility
 )
 
 
