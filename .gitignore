@@ -15,3 +15,8 @@ build/
 *.egg-info/
 .mypy_cache/
 .cache/
+
+# Local env loading
+.envrc
+.env.local
+.env
