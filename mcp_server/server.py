@@ -86,9 +86,15 @@ class BackendClient:
         if tenant is None:
             raise BackendError(f"Unknown tenant '{tenant_id}'")
         services = tenant.get("services", {})
-        base = services.get(service)
+        svc_cfg = services.get(service)
+        if svc_cfg is None:
+            raise BackendError(f'Service "{service}" not configured for tenant "{tenant_id}"')
+        if isinstance(svc_cfg, dict):
+            base = svc_cfg.get("base_url") or svc_cfg.get("url")
+        else:
+            base = svc_cfg
         if base is None:
-            raise BackendError(f"Service '{service}' not configured for tenant '{tenant_id}'")
+            raise BackendError(f'Service "{service}" missing base_url for tenant "{tenant_id}"')
         return str(base).rstrip("/")
 
     async def request(
@@ -2502,6 +2508,8 @@ async def communications_supervisor(
 
 from mcp_server.tool_aliases import register_dot_alias_tools
 from mcp_server.website_fetch_tools import register_website_fetch_tools
+from mcp_server.crm_tools_ext import register_crm_extended_tools
 
 register_dot_alias_tools(mcp, _invoke_backend_tool)
+register_crm_extended_tools(mcp, _invoke_backend_tool)
 register_website_fetch_tools(mcp)

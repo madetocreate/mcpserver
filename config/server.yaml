@@ -70,3 +70,12 @@ security:
       user_approval_required: true
     crm_update_object_record:
       user_approval_required: true
+  default_allowed_roles:
+    - Admin
+    - Orchestrator
+    - CRM-Supervisor
+    - Agent
+rate_limits:
+  default_per_minute: 120
+  per_actor_per_minute: 60
+  window_seconds: 60
