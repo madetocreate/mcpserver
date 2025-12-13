@@ -2506,10 +2506,46 @@ async def communications_supervisor(
         timeout=30.0,
     )
 
+
+@mcp.tool(
+    name="observability.metrics",
+    description="Alias for observability_metrics (dot notation).",
+)
+async def observability_metrics_dot(
+    tenant_id: str,
+    actor: str = "orchestrator",
+    actor_role: str = "Orchestrator",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await observability_metrics(tenant_id=tenant_id, actor=actor, actor_role=actor_role, ctx=ctx)
+
+@mcp.tool(
+    name="observability.health",
+    description="Alias for observability_health (dot notation).",
+)
+async def observability_health_dot(
+    tenant_id: str,
+    actor: str = "orchestrator",
+    actor_role: str = "Orchestrator",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await observability_health(tenant_id=tenant_id, actor=actor, actor_role=actor_role, ctx=ctx)
+
+@mcp.tool(
+    name="observability.discovery",
+    description="Alias for observability_discovery (dot notation).",
+)
+async def observability_discovery_dot(
+    tenant_id: str,
+    actor: str = "orchestrator",
+    actor_role: str = "Orchestrator",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await observability_discovery(tenant_id=tenant_id, actor=actor, actor_role=actor_role, ctx=ctx)
+
+
 from mcp_server.tool_aliases import register_dot_alias_tools
 from mcp_server.website_fetch_tools import register_website_fetch_tools
-from mcp_server.crm_tools_ext import register_crm_extended_tools
 
 register_dot_alias_tools(mcp, _invoke_backend_tool)
-register_crm_extended_tools(mcp, _invoke_backend_tool)
 register_website_fetch_tools(mcp)
