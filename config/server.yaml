@@ -1,0 +1,72 @@
+server:
+  name: simple-gpt-mcp
+tenants:
+  default:
+    services:
+      memory: "http://127.0.0.1:8000/mcp/memory"
+      crm: "http://127.0.0.1:8000/mcp/crm"
+      support: "http://127.0.0.1:8000/support"
+      marketing: "http://127.0.0.1:8000/marketing"
+      website: "http://127.0.0.1:8000/website"
+      backoffice: "http://127.0.0.1:8000/backoffice"
+      onboarding: "http://127.0.0.1:8000/onboarding"
+security:
+  tools:
+    memory_delete:
+      user_approval_required: true
+    memory_archive:
+      user_approval_required: true
+    crm_create_note:
+      user_approval_required: true
+    crm_update_pipeline:
+      user_approval_required: true
+    crm_link_entities:
+      user_approval_required: true
+    crm_define_pipeline:
+      user_approval_required: true
+    crm_upsert_contact:
+      user_approval_required: true
+    crm_upsert_company:
+      user_approval_required: true
+    crm_create_deal:
+      user_approval_required: true
+    crm_merge_contacts:
+      user_approval_required: true
+    crm_audit_query:
+      allowed_roles:
+        - Orchestrator
+        - CRM-Supervisor
+    crm_events_pull:
+      allowed_roles:
+        - Orchestrator
+        - Automation-Supervisor
+        - CRM-Supervisor
+    crm_events_ack:
+      allowed_roles:
+        - Orchestrator
+        - Automation-Supervisor
+        - CRM-Supervisor
+    crm_create_task:
+      user_approval_required: true
+    crm_complete_task:
+      user_approval_required: true
+    crm_log_call:
+      user_approval_required: true
+    crm_log_meeting:
+      user_approval_required: true
+    crm_define_property:
+      user_approval_required: true
+    crm_set_property:
+      user_approval_required: true
+    crm_create_segment:
+      user_approval_required: true
+    crm_webhook_create:
+      user_approval_required: true
+    crm_webhook_disable:
+      user_approval_required: true
+    crm_define_object_type:
+      user_approval_required: true
+    crm_create_object_record:
+      user_approval_required: true
+    crm_update_object_record:
+      user_approval_required: true

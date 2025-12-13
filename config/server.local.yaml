@@ -1,0 +1,5 @@
+tenants:
+  default:
+    services:
+      memory: "http://127.0.0.1:8000/mcp/memory"
+      crm: "http://127.0.0.1:8000/mcp/crm"

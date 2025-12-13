@@ -246,15 +246,72 @@ mcp = FastMCP(
 
 # Static list of all registered tools for HTTP discovery
 _ALL_TOOLS = [
-    "memory.search", "memory.write", "memory.delete", "memory.archive", "memory.telemetry",
-    "crm.lookup_customer", "crm.search_customers", "crm.create_note", "crm.update_pipeline",
-    "automation.trigger", "automation.validate", "automation.run_flow", "automation.list_workflows",
-    "inbox.get_thread", "inbox.reply", "inbox.list", "inbox.send_message",
-    "file.search_local", "file.preview", "file.metadata",
-    "support.supervisor", "marketing.supervisor", "website.supervisor", "backoffice.supervisor",
-    "memory.supervisor", "crm.supervisor", "automation.supervisor", "inbox.supervisor",
-    "file.supervisor", "communications.supervisor",
-    "observability.metrics", "observability.health", "observability.discovery",
+    "memory_search",
+    "memory_write",
+    "memory_delete",
+    "memory_archive",
+    "memory_telemetry",
+    "crm_lookup_customer",
+    "crm_search_customers",
+    "crm_create_note",
+    "crm_update_pipeline",
+    "crm_link_entities",
+    "crm_list_associations",
+    "crm_get_timeline",
+    "crm_define_pipeline",
+    "crm_list_pipelines",
+    "crm_upsert_contact",
+    "crm_upsert_company",
+    "crm_create_deal",
+    "crm_merge_contacts",
+    "crm_create_task",
+    "crm_complete_task",
+    "crm_log_call",
+    "crm_log_meeting",
+    "crm_define_property",
+    "crm_list_properties",
+    "crm_set_property",
+    "crm_get_property",
+    "crm_search_advanced",
+    "crm_create_segment",
+    "crm_list_segments",
+    "crm_segment_members",
+    "crm_webhook_create",
+    "crm_webhook_list",
+    "crm_webhook_disable",
+    "crm_webhook_dispatch",
+    "crm_define_object_type",
+    "crm_create_object_record",
+    "crm_get_object_record",
+    "crm_update_object_record",
+    "crm_audit_query",
+    "crm_events_pull",
+    "crm_events_ack",
+    "automation_trigger",
+    "automation_validate",
+    "automation_run_flow",
+    "automation_list_workflows",
+    "inbox_get_thread",
+    "inbox_reply",
+    "inbox_list",
+    "inbox_send_message",
+    "file_search_local",
+    "file_preview",
+    "file_metadata",
+    "support_supervisor",
+    "marketing_supervisor",
+    "website_supervisor",
+    "backoffice_supervisor",
+    "onboarding_supervisor",
+    "memory_supervisor",
+    "crm_supervisor",
+    "automation_supervisor",
+    "inbox_supervisor",
+    "file_supervisor",
+    "communications_supervisor",
+    "observability_metrics",
+    "observability_health",
+    "observability_discovery",
 ]
 
 
@@ -650,7 +707,7 @@ async def memory_telemetry(
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
         ctx=ctx,
-        tool_name="memory.telemetry",
+        tool_name="memory_telemetry",
         service="memory",
         method="GET",
         path="/telemetry",
@@ -677,7 +734,7 @@ async def crm_lookup_customer(
         ctx=ctx,
         tool_name="crm_lookup_customer",
         service="crm",
-        method="GET",
+        method="POST",
         path="/lookup_customer",
         tenant_id=tenant_id,
         actor=actor,
@@ -721,6 +778,7 @@ async def crm_create_note(
     tenant_id: str,
     customer_id: str,
     text: str,
+    user_approved: bool = False,
     actor: str = "orchestrator",
     actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
@@ -734,7 +792,7 @@ async def crm_create_note(
         tenant_id=tenant_id,
         actor=actor,
         actor_role=actor_role,
-        payload_data={"customer_id": customer_id, "text": text},
+        payload_data={"customer_id": customer_id, "text": text, "user_approved": user_approved},
         timeout=10.0,
     )
 
@@ -770,6 +828,994 @@ async def crm_update_pipeline(
         actor=actor,
         actor_role=actor_role,
         payload_data=payload_data,
+        timeout=10.0,
+    )
+
+
+
+@mcp.tool(
+    name="crm_link_entities",
+    description="Create an association between two CRM entities.",
+)
+async def crm_link_entities(
+    tenant_id: str,
+    from_type: str,
+    from_id: str,
+    to_type: str,
+    to_id: str,
+    association_type: str = "related",
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_link_entities",
+        service="crm",
+        method="POST",
+        path="/link_entities",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "from_type": from_type,
+            "from_id": from_id,
+            "to_type": to_type,
+            "to_id": to_id,
+            "association_type": association_type,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_list_associations",
+    description="List associations for a CRM entity.",
+)
+async def crm_list_associations(
+    tenant_id: str,
+    entity_type: str,
+    entity_id: str,
+    limit: int = 100,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_list_associations",
+        service="crm",
+        method="POST",
+        path="/list_associations",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"entity_type": entity_type, "entity_id": entity_id, "limit": limit},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_get_timeline",
+    description="Fetch a CRM timeline (activities + linked memory) for an entity.",
+)
+async def crm_get_timeline(
+    tenant_id: str,
+    entity_type: str,
+    entity_id: str,
+    limit: int = 50,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_get_timeline",
+        service="crm",
+        method="POST",
+        path="/timeline",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"entity_type": entity_type, "entity_id": entity_id, "limit": limit},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_define_pipeline",
+    description="Create a pipeline and stages for an object type.",
+)
+async def crm_define_pipeline(
+    tenant_id: str,
+    object_type: str,
+    name: str,
+    stages: List[Dict[str, Any]],
+    is_default: bool = False,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_define_pipeline",
+        service="crm",
+        method="POST",
+        path="/define_pipeline",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "object_type": object_type,
+            "name": name,
+            "stages": stages,
+            "is_default": is_default,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_list_pipelines",
+    description="List pipelines (and stages) for an object type.",
+)
+async def crm_list_pipelines(
+    tenant_id: str,
+    object_type: Optional[str] = None,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_list_pipelines",
+        service="crm",
+        method="POST",
+        path="/list_pipelines",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"object_type": object_type},
+        timeout=10.0,
+    )
+
+
+
+@mcp.tool(
+    name="crm_upsert_contact",
+    description="Create or update a CRM contact (idempotent by email).",
+)
+async def crm_upsert_contact(
+    tenant_id: str,
+    email: str,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    phone: Optional[str] = None,
+    company_name: Optional[str] = None,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_upsert_contact",
+        service="crm",
+        method="POST",
+        path="/upsert_contact",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "email": email,
+            "first_name": first_name,
+            "last_name": last_name,
+            "phone": phone,
+            "company_name": company_name,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_upsert_company",
+    description="Create or update a CRM company (idempotent by domain or name).",
+)
+async def crm_upsert_company(
+    tenant_id: str,
+    name: str,
+    domain: Optional[str] = None,
+    industry: Optional[str] = None,
+    company_size: Optional[str] = None,
+    lifecycle_stage: Optional[str] = None,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_upsert_company",
+        service="crm",
+        method="POST",
+        path="/upsert_company",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "name": name,
+            "domain": domain,
+            "industry": industry,
+            "company_size": company_size,
+            "lifecycle_stage": lifecycle_stage,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_create_deal",
+    description="Create a CRM deal/opportunity.",
+)
+async def crm_create_deal(
+    tenant_id: str,
+    name: str,
+    amount: Optional[float] = None,
+    currency: str = "EUR",
+    pipeline: Optional[str] = None,
+    stage: Optional[str] = None,
+    status: str = "open",
+    company_id: Optional[str] = None,
+    primary_contact_id: Optional[str] = None,
+    expected_close_date: Optional[str] = None,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_create_deal",
+        service="crm",
+        method="POST",
+        path="/create_deal",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "name": name,
+            "amount": amount,
+            "currency": currency,
+            "pipeline": pipeline,
+            "stage": stage,
+            "status": status,
+            "company_id": company_id,
+            "primary_contact_id": primary_contact_id,
+            "expected_close_date": expected_close_date,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_merge_contacts",
+    description="Merge one contact into another.",
+)
+async def crm_merge_contacts(
+    tenant_id: str,
+    source_contact_id: str,
+    target_contact_id: str,
+    reason: Optional[str] = None,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_merge_contacts",
+        service="crm",
+        method="POST",
+        path="/merge_contacts",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "source_contact_id": source_contact_id,
+            "target_contact_id": target_contact_id,
+            "reason": reason,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+
+@mcp.tool(
+    name="crm_audit_query",
+    description="Query CRM audit log entries.",
+)
+async def crm_audit_query(
+    tenant_id: str,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    action: Optional[str] = None,
+    limit: int = 100,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_audit_query",
+        service="crm",
+        method="POST",
+        path="/audit_query",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"entity_type": entity_type, "entity_id": entity_id, "action": action, "limit": limit},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_events_pull",
+    description="Pull pending CRM events from the outbox.",
+)
+async def crm_events_pull(
+    tenant_id: str,
+    limit: int = 50,
+    actor: str = "orchestrator",
+    actor_role: str = "Automation-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_events_pull",
+        service="crm",
+        method="POST",
+        path="/events_pull",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"limit": limit},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_events_ack",
+    description="Acknowledge a CRM outbox event as processed.",
+)
+async def crm_events_ack(
+    tenant_id: str,
+    event_id: str,
+    status: str = "processed",
+    actor: str = "orchestrator",
+    actor_role: str = "Automation-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_events_ack",
+        service="crm",
+        method="POST",
+        path="/events_ack",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"event_id": event_id, "status": status},
+        timeout=10.0,
+    )
+
+
+
+@mcp.tool(
+    name="crm_create_task",
+    description="Create a CRM task on an entity.",
+)
+async def crm_create_task(
+    tenant_id: str,
+    entity_type: str,
+    entity_id: str,
+    subject: str,
+    description: str = "",
+    due_at: str | None = None,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_create_task",
+        service="crm",
+        method="POST",
+        path="/create_task",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "subject": subject,
+            "description": description,
+            "due_at": due_at,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_complete_task",
+    description="Complete a CRM task.",
+)
+async def crm_complete_task(
+    tenant_id: str,
+    task_id: str,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_complete_task",
+        service="crm",
+        method="POST",
+        path="/complete_task",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"task_id": task_id, "user_approved": user_approved},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_log_call",
+    description="Log a CRM call and link it into memory.",
+)
+async def crm_log_call(
+    tenant_id: str,
+    entity_type: str,
+    entity_id: str,
+    subject: str,
+    summary: str,
+    duration_seconds: int | None = None,
+    occurred_at: str | None = None,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_log_call",
+        service="crm",
+        method="POST",
+        path="/log_call",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "subject": subject,
+            "summary": summary,
+            "duration_seconds": duration_seconds,
+            "occurred_at": occurred_at,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_log_meeting",
+    description="Log a CRM meeting and link it into memory.",
+)
+async def crm_log_meeting(
+    tenant_id: str,
+    entity_type: str,
+    entity_id: str,
+    subject: str,
+    summary: str,
+    start_at: str | None = None,
+    end_at: str | None = None,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_log_meeting",
+        service="crm",
+        method="POST",
+        path="/log_meeting",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "subject": subject,
+            "summary": summary,
+            "start_at": start_at,
+            "end_at": end_at,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+
+@mcp.tool(
+    name="crm_define_property",
+    description="Define a custom CRM property for an object type.",
+)
+async def crm_define_property(
+    tenant_id: str,
+    object_type: str,
+    name: str,
+    label: str | None = None,
+    data_type: str = "string",
+    field_type: str | None = None,
+    options: list[dict[str, Any]] | None = None,
+    required: bool = False,
+    unique_property: bool = False,
+    archived: bool = False,
+    description: str | None = None,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_define_property",
+        service="crm",
+        method="POST",
+        path="/define_property",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "object_type": object_type,
+            "name": name,
+            "label": label,
+            "data_type": data_type,
+            "field_type": field_type,
+            "options": options,
+            "required": required,
+            "unique_property": unique_property,
+            "archived": archived,
+            "description": description,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_list_properties",
+    description="List property definitions for an object type.",
+)
+async def crm_list_properties(
+    tenant_id: str,
+    object_type: str,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_list_properties",
+        service="crm",
+        method="POST",
+        path="/list_properties",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"object_type": object_type},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_set_property",
+    description="Set a property value on a CRM record.",
+)
+async def crm_set_property(
+    tenant_id: str,
+    object_type: str,
+    record_id: str,
+    property_name: str,
+    value: Any = None,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_set_property",
+        service="crm",
+        method="POST",
+        path="/set_property",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={
+            "object_type": object_type,
+            "record_id": record_id,
+            "property_name": property_name,
+            "value": value,
+            "user_approved": user_approved,
+        },
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_get_property",
+    description="Get a property value from a CRM record.",
+)
+async def crm_get_property(
+    tenant_id: str,
+    object_type: str,
+    record_id: str,
+    property_name: str,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_get_property",
+        service="crm",
+        method="POST",
+        path="/get_property",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"object_type": object_type, "record_id": record_id, "property_name": property_name},
+        timeout=10.0,
+    )
+
+
+
+@mcp.tool(
+    name="crm_search_advanced",
+    description="Advanced CRM search with filters, sort and pagination.",
+)
+async def crm_search_advanced(
+    tenant_id: str,
+    object_type: str,
+    filters: List[Dict[str, Any]],
+    limit: int = 20,
+    offset: int = 0,
+    sort_by: str = "updated_at",
+    sort_dir: str = "DESC",
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_search_advanced",
+        service="crm",
+        method="POST",
+        path="/search_advanced",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"object_type": object_type, "filters": filters, "limit": limit, "offset": offset, "sort_by": sort_by, "sort_dir": sort_dir},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_create_segment",
+    description="Create or update a CRM segment (list).",
+)
+async def crm_create_segment(
+    tenant_id: str,
+    object_type: str,
+    name: str,
+    definition: Dict[str, Any],
+    is_dynamic: bool = True,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_create_segment",
+        service="crm",
+        method="POST",
+        path="/create_segment",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"object_type": object_type, "name": name, "definition": definition, "is_dynamic": is_dynamic, "user_approved": user_approved},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_list_segments",
+    description="List CRM segments (lists).",
+)
+async def crm_list_segments(
+    tenant_id: str,
+    object_type: Optional[str] = None,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_list_segments",
+        service="crm",
+        method="POST",
+        path="/list_segments",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"object_type": object_type},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_segment_members",
+    description="Get record IDs for a segment (dynamic compute or static membership).",
+)
+async def crm_segment_members(
+    tenant_id: str,
+    segment_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_segment_members",
+        service="crm",
+        method="POST",
+        path="/segment_members",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"segment_id": segment_id, "limit": limit, "offset": offset},
+        timeout=10.0,
+    )
+
+
+
+@mcp.tool(
+    name="crm_webhook_create",
+    description="Create or update a CRM webhook subscription.",
+)
+async def crm_webhook_create(
+    tenant_id: str,
+    name: str,
+    endpoint_url: str,
+    secret: str | None = None,
+    event_types: list[str] | None = None,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "Automation-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_webhook_create",
+        service="crm",
+        method="POST",
+        path="/webhook_create",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"name": name, "endpoint_url": endpoint_url, "secret": secret, "event_types": event_types, "user_approved": user_approved},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_webhook_list",
+    description="List CRM webhook subscriptions.",
+)
+async def crm_webhook_list(
+    tenant_id: str,
+    actor: str = "orchestrator",
+    actor_role: str = "Automation-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_webhook_list",
+        service="crm",
+        method="POST",
+        path="/webhook_list",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_webhook_disable",
+    description="Disable a CRM webhook subscription.",
+)
+async def crm_webhook_disable(
+    tenant_id: str,
+    subscription_id: str,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "Automation-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_webhook_disable",
+        service="crm",
+        method="POST",
+        path="/webhook_disable",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"subscription_id": subscription_id, "user_approved": user_approved},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_webhook_dispatch",
+    description="Dispatch pending CRM outbox events to webhook subscriptions.",
+)
+async def crm_webhook_dispatch(
+    tenant_id: str,
+    limit: int = 50,
+    actor: str = "orchestrator",
+    actor_role: str = "Automation-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_webhook_dispatch",
+        service="crm",
+        method="POST",
+        path="/webhook_dispatch",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"limit": limit},
+        timeout=30.0,
+    )
+
+
+@mcp.tool(
+    name="crm_define_object_type",
+    description="Define a custom CRM object type.",
+)
+async def crm_define_object_type(
+    tenant_id: str,
+    object_type: str,
+    label: str,
+    plural_label: str,
+    description: str | None = None,
+    archived: bool = False,
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_define_object_type",
+        service="crm",
+        method="POST",
+        path="/define_object_type",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"object_type": object_type, "label": label, "plural_label": plural_label, "description": description, "archived": archived, "user_approved": user_approved},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_create_object_record",
+    description="Create a record for a custom object type.",
+)
+async def crm_create_object_record(
+    tenant_id: str,
+    object_type: str,
+    properties: Dict[str, Any],
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_create_object_record",
+        service="crm",
+        method="POST",
+        path="/create_object_record",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"object_type": object_type, "properties": properties, "user_approved": user_approved},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_get_object_record",
+    description="Get a record for a custom object type.",
+)
+async def crm_get_object_record(
+    tenant_id: str,
+    record_id: str,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_get_object_record",
+        service="crm",
+        method="POST",
+        path="/get_object_record",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"record_id": record_id},
+        timeout=10.0,
+    )
+
+
+@mcp.tool(
+    name="crm_update_object_record",
+    description="Update a record for a custom object type.",
+)
+async def crm_update_object_record(
+    tenant_id: str,
+    record_id: str,
+    patch: Dict[str, Any],
+    user_approved: bool = False,
+    actor: str = "orchestrator",
+    actor_role: str = "CRM-Supervisor",
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    return await _invoke_backend_tool(
+        ctx=ctx,
+        tool_name="crm_update_object_record",
+        service="crm",
+        method="POST",
+        path="/update_object_record",
+        tenant_id=tenant_id,
+        actor=actor,
+        actor_role=actor_role,
+        payload_data={"record_id": record_id, "patch": patch, "user_approved": user_approved},
         timeout=10.0,
     )
 
@@ -1250,8 +2296,8 @@ async def observability_discovery(
 ) -> Dict[str, Any]:
     ctx = _require_context(ctx)
     app = ctx.request_context.lifespan_context
-    app.rate_limiter.check(tenant_id, "observability.discovery", actor)
-    app.permissions.ensure_allowed("observability.discovery", actor_role)
+    app.rate_limiter.check(tenant_id, "observability_discovery", actor)
+    app.permissions.ensure_allowed("observability_discovery", actor_role)
 
     # Get tools via MCP server session
     session = ctx.request_context.session
@@ -1453,3 +2499,9 @@ async def communications_supervisor(
         payload_data=payload_data,
         timeout=30.0,
     )
+
+from mcp_server.tool_aliases import register_dot_alias_tools
+from mcp_server.website_fetch_tools import register_website_fetch_tools
+
+register_dot_alias_tools(mcp, _invoke_backend_tool)
+register_website_fetch_tools(mcp)
