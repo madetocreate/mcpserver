@@ -18,6 +18,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 
 from .config import load_config
+from .cost_policy import has_cost_approval, is_high_cost_tool
 from .observability import AuditLogger, InMemoryMetrics
 from .rate_limits import AdvancedRateLimiter, RateLimitError
 
@@ -62,16 +63,35 @@ class PermissionChecker:
     def __init__(self, config: Dict[str, Any]) -> None:
         security_cfg = config.get("security", {})
         self.tools = security_cfg.get("tools", {})
+        self.default_allowed_roles = security_cfg.get("default_allowed_roles", [])
 
     def ensure_allowed(self, tool_name: str, actor_role: str) -> Dict[str, Any]:
-        tool_cfg = self.tools.get(tool_name)
-        if tool_cfg is None:
-            return {}
-        allowed = tool_cfg.get("allowed_roles", [])
-        if allowed and actor_role not in allowed:
-            raise PermissionError(
-                f"Role '{actor_role}' is not allowed to call {tool_name}"
-            )
+        """
+        Check if actor_role is allowed to call tool_name.
+        
+        Rules:
+        1. If tool has explicit allowed_roles, actor_role must be in that list
+        2. If tool has no allowed_roles, check default_allowed_roles
+        3. If default_allowed_roles is set and actor_role is not in it, deny access
+        """
+        tool_cfg = self.tools.get(tool_name) or {}
+        allowed = tool_cfg.get("allowed_roles")
+        
+        # Rule 1: Tool has explicit allowed_roles
+        if allowed:
+            if actor_role not in allowed:
+                raise PermissionError(
+                    f"Role '{actor_role}' is not allowed to call {tool_name}. "
+                    f"Allowed roles: {allowed}"
+                )
+        # Rule 2 & 3: No explicit allowed_roles, check default
+        elif self.default_allowed_roles:
+            if actor_role not in self.default_allowed_roles:
+                raise PermissionError(
+                    f"Role '{actor_role}' is not allowed to call {tool_name}. "
+                    f"Default allowed roles: {self.default_allowed_roles}"
+                )
+        
         return tool_cfg
 
 
@@ -250,77 +270,6 @@ mcp = FastMCP(
 )
 
 
-# Static list of all registered tools for HTTP discovery
-_ALL_TOOLS = [
-    "memory_search",
-    "memory_write",
-    "memory_delete",
-    "memory_archive",
-    "memory_telemetry",
-    "crm_lookup_customer",
-    "crm_search_customers",
-    "crm_create_note",
-    "crm_update_pipeline",
-    "crm_link_entities",
-    "crm_list_associations",
-    "crm_get_timeline",
-    "crm_define_pipeline",
-    "crm_list_pipelines",
-    "crm_upsert_contact",
-    "crm_upsert_company",
-    "crm_create_deal",
-    "crm_merge_contacts",
-    "crm_create_task",
-    "crm_complete_task",
-    "crm_log_call",
-    "crm_log_meeting",
-    "crm_define_property",
-    "crm_list_properties",
-    "crm_set_property",
-    "crm_get_property",
-    "crm_search_advanced",
-    "crm_create_segment",
-    "crm_list_segments",
-    "crm_segment_members",
-    "crm_webhook_create",
-    "crm_webhook_list",
-    "crm_webhook_disable",
-    "crm_webhook_dispatch",
-    "crm_define_object_type",
-    "crm_create_object_record",
-    "crm_get_object_record",
-    "crm_update_object_record",
-    "crm_audit_query",
-    "crm_events_pull",
-    "crm_events_ack",
-    "automation_trigger",
-    "automation_validate",
-    "automation_run_flow",
-    "automation_list_workflows",
-    "inbox_get_thread",
-    "inbox_reply",
-    "inbox_list",
-    "inbox_send_message",
-    "file_search_local",
-    "file_preview",
-    "file_metadata",
-    "support_supervisor",
-    "marketing_supervisor",
-    "website_supervisor",
-    "backoffice_supervisor",
-    "onboarding_supervisor",
-    "memory_supervisor",
-    "crm_supervisor",
-    "automation_supervisor",
-    "inbox_supervisor",
-    "file_supervisor",
-    "communications_supervisor",
-    "observability_metrics",
-    "observability_health",
-    "observability_discovery",
-]
-
-
 # Note: FastMCP doesn't expose its internal ASGI app easily for adding custom routes.
 # The discovery endpoint /mcp/discovery is available via:
 # 1. MCP protocol: Call the observability.discovery tool via /mcp endpoint
@@ -413,6 +362,8 @@ async def _call_backend_tool(
     try:
         app.rate_limiter.check(tenant_id, tool_name, actor)
         tool_cfg = app.permissions.ensure_allowed(tool_name, actor_role)
+        
+        # User approval check (for destructive actions)
         requires_approval = bool(tool_cfg.get("user_approval_required")) if tool_cfg else False
         user_approved = bool(payload.get("user_approved", False))
         if requires_approval and not user_approved:
@@ -420,6 +371,15 @@ async def _call_backend_tool(
             raise PermissionError(
                 f"Tool {tool_name} requires user approval but 'user_approved' was false."
             )
+        
+        # High-cost gate (for expensive operations like image/video/audio generation)
+        if is_high_cost_tool(tool_name, tool_cfg):
+            if not has_cost_approval(payload):
+                error_code = "COST_APPROVAL_REQUIRED"
+                raise PermissionError(
+                    f"Tool '{tool_name}' is high-cost and requires explicit approval "
+                    f"(cost_approved=true or user_approved=true)."
+                )
         
         result = await app.backend.request(
             tenant_id=tenant_id,
@@ -1827,416 +1787,6 @@ async def crm_update_object_record(
 
 
 @mcp.tool(
-    name="automation_trigger",
-    description="Trigger an automation workflow with a payload.",
-)
-async def automation_trigger(
-    tenant_id: str,
-    workflow_id: str,
-    input_payload: Optional[Dict[str, Any]] = None,
-    user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "Automation-Supervisor",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="automation_trigger",
-        service="automation",
-        method="POST",
-        path="/trigger",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"workflow_id": workflow_id, "input": input_payload or {}, "user_approved": user_approved},
-        timeout=20.0,
-    )
-
-
-@mcp.tool(
-    name="automation_validate",
-    description="Validate whether a workflow can run with the given payload.",
-)
-async def automation_validate(
-    tenant_id: str,
-    workflow_id: str,
-    input_payload: Optional[Dict[str, Any]] = None,
-    actor: str = "orchestrator",
-    actor_role: str = "Automation-Supervisor",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="automation_validate",
-        service="automation",
-        method="POST",
-        path="/validate",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"workflow_id": workflow_id, "input": input_payload or {}},
-        timeout=10.0,
-    )
-
-
-@mcp.tool(
-    name="automation_run_flow",
-    description="Start a long-running automation flow.",
-)
-async def automation_run_flow(
-    tenant_id: str,
-    flow_key: str,
-    mode: str = "async",
-    input_payload: Optional[Dict[str, Any]] = None,
-    user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "Automation-Supervisor",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="automation_run_flow",
-        service="automation",
-        method="POST",
-        path="/run_flow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"flow_key": flow_key, "mode": mode, "input": input_payload or {}, "user_approved": user_approved},
-        timeout=30.0,
-    )
-
-
-@mcp.tool(
-    name="automation_list_workflows",
-    description="List available automation workflows for the tenant.",
-)
-async def automation_list_workflows(
-    tenant_id: str,
-    query: Optional[str] = None,
-    tag: Optional[str] = None,
-    actor: str = "orchestrator",
-    actor_role: str = "Automation-Supervisor",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    payload_data: Dict[str, Any] = {}
-    if query:
-        payload_data["query"] = query
-    if tag:
-        payload_data["tag"] = tag
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="automation_list_workflows",
-        service="automation",
-        method="GET",
-        path="/workflows",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data=payload_data,
-        timeout=10.0,
-    )
-
-
-@mcp.tool(
-    name="inbox_get_thread",
-    description="Load a full inbox thread including messages and metadata.",
-)
-async def inbox_get_thread(
-    tenant_id: str,
-    thread_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Inbox-Supervisor",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="inbox_get_thread",
-        service="inbox",
-        method="GET",
-        path="/thread",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"thread_id": thread_id},
-        timeout=10.0,
-    )
-
-
-@mcp.tool(
-    name="inbox_reply",
-    description="Reply to an existing inbox thread.",
-)
-async def inbox_reply(
-    tenant_id: str,
-    thread_id: str,
-    body: str,
-    draft: bool = False,
-    user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "Inbox-Supervisor",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="inbox_reply",
-        service="inbox",
-        method="POST",
-        path="/reply",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"thread_id": thread_id, "body": body, "draft": draft, "user_approved": user_approved},
-        timeout=15.0,
-    )
-
-
-@mcp.tool(
-    name="inbox_list",
-    description="List inbox threads for a folder.",
-)
-async def inbox_list(
-    tenant_id: str,
-    folder: str = "inbox",
-    limit: int = 20,
-    actor: str = "orchestrator",
-    actor_role: str = "Inbox-Supervisor",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="inbox_list",
-        service="inbox",
-        method="GET",
-        path="/list",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"folder": folder, "limit": limit},
-        timeout=10.0,
-    )
-
-
-@mcp.tool(
-    name="inbox_send_message",
-    description="Send a new inbox message.",
-)
-async def inbox_send_message(
-    tenant_id: str,
-    to: str,
-    subject: str,
-    body: str,
-    cc: Optional[List[str]] = None,
-    bcc: Optional[List[str]] = None,
-    user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "Inbox-Supervisor",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="inbox_send_message",
-        service="inbox",
-        method="POST",
-        path="/send",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"to": to, "subject": subject, "body": body, "cc": cc or [], "bcc": bcc or [], "user_approved": user_approved},
-        timeout=20.0,
-    )
-
-
-@mcp.tool(
-    name="file_search_local",
-    description="Search local or indexed files by query.",
-)
-async def file_search_local(
-    tenant_id: str,
-    query: str,
-    max_results: int = 20,
-    actor: str = "orchestrator",
-    actor_role: str = "User-Agent",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="file_search_local",
-        service="files",
-        method="POST",
-        path="/search",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"query": query, "max_results": max_results},
-        timeout=10.0,
-    )
-
-
-@mcp.tool(
-    name="file_preview",
-    description="Get a textual preview for a file.",
-)
-async def file_preview(
-    tenant_id: str,
-    file_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "User-Agent",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="file_preview",
-        service="files",
-        method="GET",
-        path="/preview",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"file_id": file_id},
-        timeout=10.0,
-    )
-
-
-@mcp.tool(
-    name="file_metadata",
-    description="Get structured metadata for a file.",
-)
-async def file_metadata(
-    tenant_id: str,
-    file_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "User-Agent",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="file_metadata",
-        service="files",
-        method="GET",
-        path="/metadata",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"file_id": file_id},
-        timeout=10.0,
-    )
-
-
-@mcp.tool(
-    name="support_supervisor",
-    description="Run the support workflow agent to handle a support request.",
-)
-async def support_workflow(
-    tenant_id: str,
-    message: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="support_supervisor",
-        service="support",
-        method="POST",
-        path="/workflow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"message": message},
-        timeout=30.0,
-    )
-
-
-@mcp.tool(
-    name="marketing_supervisor",
-    description="Run the marketing workflow agent to handle marketing requests.",
-)
-async def marketing_workflow(
-    tenant_id: str,
-    message: str,
-    thread_id: Optional[str] = None,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    payload_data: Dict[str, Any] = {"message": message}
-    if thread_id:
-        payload_data["thread_id"] = thread_id
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="marketing_supervisor",
-        service="marketing",
-        method="POST",
-        path="/workflow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data=payload_data,
-        timeout=30.0,
-    )
-
-
-@mcp.tool(
-    name="website_supervisor",
-    description="Run the website workflow agent to handle website widget conversations.",
-)
-async def website_workflow(
-    tenant_id: str,
-    message: str,
-    thread_id: Optional[str] = None,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    payload_data: Dict[str, Any] = {"message": message}
-    if thread_id:
-        payload_data["thread_id"] = thread_id
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="website_supervisor",
-        service="website",
-        method="POST",
-        path="/workflow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data=payload_data,
-        timeout=30.0,
-    )
-
-
-@mcp.tool(
-    name="backoffice_supervisor",
-    description="Run the backoffice workflow agent to handle internal operations requests.",
-)
-async def backoffice_workflow(
-    tenant_id: str,
-    message: str,
-    thread_id: Optional[str] = None,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    payload_data: Dict[str, Any] = {"message": message}
-    if thread_id:
-        payload_data["thread_id"] = thread_id
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="backoffice_supervisor",
-        service="backoffice",
-        method="POST",
-        path="/workflow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data=payload_data,
-        timeout=30.0,
-    )
-
-
-
-@mcp.tool(
     name="observability_metrics",
     description="Return in-memory counters and average latency per MCP tool.",
 )
@@ -2354,160 +1904,6 @@ async def observability_discovery(
 
 
 @mcp.tool(
-    name="memory_supervisor",
-    description="Run the memory workflow agent to handle memory-related requests.",
-)
-async def memory_supervisor(
-    tenant_id: str,
-    message: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="memory_supervisor",
-        service="memory",
-        method="POST",
-        path="/workflow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"message": message},
-        timeout=30.0,
-    )
-
-
-@mcp.tool(
-    name="crm_supervisor",
-    description="Run the CRM workflow agent to handle CRM-related requests.",
-)
-async def crm_supervisor(
-    tenant_id: str,
-    message: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="crm_supervisor",
-        service="crm",
-        method="POST",
-        path="/workflow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"message": message},
-        timeout=30.0,
-    )
-
-
-@mcp.tool(
-    name="automation_supervisor",
-    description="Run the automation workflow agent to orchestrate automation flows.",
-)
-async def automation_supervisor(
-    tenant_id: str,
-    message: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="automation_supervisor",
-        service="automation",
-        method="POST",
-        path="/workflow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"message": message},
-        timeout=30.0,
-    )
-
-
-@mcp.tool(
-    name="inbox_supervisor",
-    description="Run the inbox workflow agent to coordinate multi-channel inbox operations.",
-)
-async def inbox_supervisor(
-    tenant_id: str,
-    message: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="inbox_supervisor",
-        service="inbox",
-        method="POST",
-        path="/workflow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"message": message},
-        timeout=30.0,
-    )
-
-
-@mcp.tool(
-    name="file_supervisor",
-    description="Run the file workflow agent to coordinate file search and preview operations.",
-)
-async def file_supervisor(
-    tenant_id: str,
-    message: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="file_supervisor",
-        service="files",
-        method="POST",
-        path="/workflow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data={"message": message},
-        timeout=30.0,
-    )
-
-
-@mcp.tool(
-    name="communications_supervisor",
-    description="Run the communications workflow agent to route and coordinate messages across channels.",
-)
-async def communications_supervisor(
-    tenant_id: str,
-    message: str,
-    preferred_channel: Optional[str] = None,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
-    ctx: TypedContext | None = None,
-) -> Dict[str, Any]:
-    payload_data: Dict[str, Any] = {"message": message}
-    if preferred_channel:
-        payload_data["preferred_channel"] = preferred_channel
-    return await _invoke_backend_tool(
-        ctx=ctx,
-        tool_name="communications_supervisor",
-        service="communications",
-        method="POST",
-        path="/workflow",
-        tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
-        payload_data=payload_data,
-        timeout=30.0,
-    )
-
-
-@mcp.tool(
     name="observability.metrics",
     description="Alias for observability_metrics (dot notation).",
 )
@@ -2546,6 +1942,15 @@ async def observability_discovery_dot(
 
 from mcp_server.tool_aliases import register_dot_alias_tools
 from mcp_server.website_fetch_tools import register_website_fetch_tools
+from mcp_server.real_estate_tools import (
+    real_estate_create_property,
+    real_estate_generate_expose,
+    real_estate_validate_geg87,
+    real_estate_create_viewing,
+    real_estate_process_lead,
+    real_estate_match_lead,
+    real_estate_get_wizard_checklist,
+)
 
 register_dot_alias_tools(mcp, _invoke_backend_tool)
 register_website_fetch_tools(mcp)

@@ -7,6 +7,7 @@ __pycache__/
 .env
 .env.*
 .DS_Store
+__MACOSX/
 .vscode/
 .idea/
 dist/
@@ -20,3 +21,6 @@ build/
 .envrc
 .env.local
 .env
+
+# Runtime logs
+logs/*.log

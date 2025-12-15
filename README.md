@@ -1,7 +1,9 @@
 # simple-gpt-mcp-server
 
 MCP (Model Context Protocol) server that exposes internal backend services
-(memory, CRM, automation, inbox, files) as tools for AI agents.
+(memory, CRM) as tools for AI agents.
+
+**Key Principle**: The MCP server is a **Tool Gateway**, providing core tools only - no workflow agents or supervisors.
 
 ## Features
 
@@ -80,11 +82,6 @@ tenants:
     services:
       memory: "http://127.0.0.1:8000/mcp/memory"
       crm: "http://127.0.0.1:8000/mcp/crm"
-      support: "http://127.0.0.1:8000/support"
-      marketing: "http://127.0.0.1:8000/marketing"
-      website: "http://127.0.0.1:8000/website"
-      backoffice: "http://127.0.0.1:8000/backoffice"
-      onboarding: "http://127.0.0.1:8000/onboarding"
 
 security:
   tools:
@@ -115,78 +112,23 @@ rate_limits:
 - **`memory_archive`** - Archive memory (requires approval)
 - **`memory_telemetry`** - Get memory usage telemetry
 
-### CRM Tools (Phase 1-3)
+### CRM Tools
 
-- **`crm_lookup_customer`** - Lookup customer by ID
-- **`crm_search_customers`** - Search customers
-- **`crm_create_note`** - Create note (requires approval)
-- **`crm_update_pipeline`** - Update pipeline (requires approval)
-- **`crm_link_entities`** - Link entities (requires approval)
-- **`crm_list_associations`** - List associations
-- **`crm_get_timeline`** - Get timeline
-- **`crm_define_pipeline`** - Define pipeline (requires approval)
-- **`crm_list_pipelines`** - List pipelines
-- **`crm_upsert_contact`** - Upsert contact (requires approval)
-- **`crm_upsert_company`** - Upsert company (requires approval)
-- **`crm_create_deal`** - Create deal (requires approval)
-- **`crm_merge_contacts`** - Merge contacts (admin-only)
-- **`crm_audit_query`** - Audit query (restricted roles)
-- **`crm_events_pull`** - Pull events (restricted roles)
-- **`crm_events_ack`** - Acknowledge events (restricted roles)
-- **`crm_create_task`** - Create task (requires approval)
-- **`crm_complete_task`** - Complete task (requires approval)
-- **`crm_log_call`** - Log call (requires approval)
-- **`crm_log_meeting`** - Log meeting (requires approval)
-- **`crm_define_property`** - Define property (requires approval)
-- **`crm_set_property`** - Set property (requires approval)
-- **`crm_search_advanced`** - Advanced search
-- **`crm_create_segment`** - Create segment (requires approval)
-
-### CRM Tools (Phase 7 - Admin)
-
-- **`crm_create_api_key`** - Create API key (admin-only)
-- **`crm_upsert_user`** - Upsert user (admin-only)
-- **`crm_create_team`** - Create team (admin-only)
-- **`crm_add_team_member`** - Add team member (admin-only)
-- **`crm_assign_owner`** - Assign owner
-
-### CRM Tools (Phase 8 - Import/Export)
-
-- **`crm_import_contacts_csv`** - Import contacts from CSV
-- **`crm_export_contacts_csv`** - Export contacts as CSV
-- **`crm_merge_contacts`** - Merge contacts (admin-only)
-
-### CRM Tools (Phase 9 - Reporting)
-
-- **`crm_log_email_engagement`** - Log email engagement
-- **`crm_report_pipeline`** - Pipeline report
-- **`crm_forecast_pipeline`** - Forecast report
-
-### CRM Tools (Phase 10 - Governance)
-
-- **`crm_gdpr_export_contact_data`** - GDPR export (admin-only)
-- **`crm_gdpr_delete_contact`** - GDPR delete (admin-only, requires approval)
-- **`crm_gdpr_blocklist_email`** - Blocklist email (admin-only)
-- **`crm_webhook_create`** - Create webhook (requires approval)
-- **`crm_webhook_list`** - List webhooks
-- **`crm_webhook_disable`** - Disable webhook (requires approval)
-- **`crm_webhook_dispatch`** - Dispatch webhook
-- **`crm_define_object_type`** - Define custom object type (requires approval)
-- **`crm_create_object_record`** - Create custom object (requires approval)
-- **`crm_get_object_record`** - Get custom object
-- **`crm_update_object_record`** - Update custom object (requires approval)
-
-### Workflow Tools (Dot Notation)
-
-- **`support.workflow`** - Run support workflow
-- **`marketing.workflow`** - Run marketing workflow
-- **`website.workflow`** - Run website workflow
-- **`backoffice.workflow`** - Run backoffice workflow
-- **`onboarding.workflow`** - Run onboarding workflow
+See [Complete Guide](docs/COMPLETE_GUIDE.md#crm-tools) for full list of 40+ CRM tools including:
+- Core operations (lookup, search)
+- Write operations (create, update - require approval)
+- Admin operations (restricted roles)
+- Webhooks, custom objects, import/export, reporting
 
 ### Website Tools
 
 - **`website.fetch`** - Fetch public URL (SSRF-protected, size-limited)
+
+### Observability Tools
+
+- **`observability_metrics`** - Return in-memory counters and average latency per tool
+- **`observability_health`** - Return server configuration and status
+- **`observability_discovery`** - List all available tools with parameters
 
 ## Rate Limiting
 
@@ -198,6 +140,16 @@ Per-tool rate limiting is configured in `server.yaml`:
 
 ## Security & Permissions
 
+### Role-Based Access Control
+
+**Default Roles**: Tools without explicit `allowed_roles` are only accessible to roles in `default_allowed_roles`:
+- Admin
+- Orchestrator
+- CRM-Supervisor
+- Agent
+
+**Tool-Specific Roles**: Tools can override with explicit `allowed_roles` in config.
+
 ### User Approval Required
 
 Tools that modify data require `user_approved: true`:
@@ -207,20 +159,14 @@ Tools that modify data require `user_approved: true`:
 - `crm_create_deal`, `crm_merge_contacts`
 - And many more (see `config/server.yaml`)
 
-### Role-Based Access
+### High-Cost Tool Protection
 
-Some tools are restricted to specific roles:
-- **`crm_audit_query`**: Orchestrator, CRM-Supervisor
-- **`crm_events_pull`**: Orchestrator, Automation-Supervisor, CRM-Supervisor
-- **`crm_events_ack`**: Orchestrator, Automation-Supervisor, CRM-Supervisor
-- **Admin-only tools**: `crm_create_api_key`, `crm_upsert_user`, `crm_gdpr_*`
+Tools that generate images/video/audio require `cost_approved: true`:
+- Automatically detected by name (e.g., `image_generate`, `video.create`)
+- Can be explicitly marked in config: `high_cost: true`
+- `user_approved: true` also counts as cost approval
 
-### Default Allowed Roles
-
-- Admin
-- Orchestrator
-- CRM-Supervisor
-- Agent
+See [Complete Guide](docs/COMPLETE_GUIDE.md#high-cost-tool-protection) for details.
 
 ## Observability
 
@@ -307,24 +253,33 @@ Backend services are configured per tenant in `config/server.yaml`:
 - `crm`: `/mcp/crm` endpoint
 - `support`, `marketing`, `website`, `backoffice`, `onboarding`: Direct workflow endpoints
 
+## Documentation
+
+- **[Complete Guide](docs/COMPLETE_GUIDE.md)** - Comprehensive documentation with examples
+- **[Architecture](docs/ARCHITECTURE.md)** - System architecture and design
+- **[Error Handling](docs/ERROR_HANDLING.md)** - Error handling patterns
+- **[Observability](docs/OBSERVABILITY.md)** - Metrics and logging
+
 ## Troubleshooting
-
-### MCP Server not connecting
-
-1. Check if MCP server is running: `curl http://localhost:9000/health`
-2. Check `MCP_SERVER_URL` in backend `.env`
-3. Check `ENABLE_MCP_TOOLS=true` in backend `.env`
-4. Check backend logs for connection errors
 
 ### Tool not found
 
 1. Check if tool is registered in `mcp_server/server.py`
-2. Check permissions in `config/server.yaml`
-3. Check if backend service is running
-4. Check backend service URL in `config/server.yaml`
+2. Use `observability_discovery` to list all tools
+3. Check tool name spelling
 
 ### Permission denied
 
 1. Check `actor_role` in tool call
 2. Check `allowed_roles` in `config/server.yaml`
-3. Check if `user_approved: true` for write operations
+3. Check `default_allowed_roles` if tool has no explicit roles
+4. For write operations, ensure `user_approved: true`
+5. For high-cost tools, ensure `cost_approved: true`
+
+### Rate limit exceeded
+
+1. Check rate limit configuration in `config/server.yaml`
+2. Wait for `retry_after` seconds
+3. Consider increasing limits for development
+
+See [Complete Guide](docs/COMPLETE_GUIDE.md#troubleshooting) for more details.

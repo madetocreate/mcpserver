@@ -38,33 +38,54 @@ The MCP server acts as a **Tool Provider** in the AKLOW ecosystem:
 - **Phase 9**: Reporting (pipeline reports, forecasts)
 - **Phase 10**: Governance (GDPR, webhooks, custom objects)
 
-### Workflow Tools (Dot Notation)
-- `support.workflow`: Support automation
-- `marketing.workflow`: Marketing campaigns
-- `website.workflow`: Website operations
-- `backoffice.workflow`: Backoffice tasks
-- `onboarding.workflow`: Onboarding flow
+### Observability Tools
+- `observability_metrics`: In-memory metrics and latency
+- `observability_health`: Server configuration and status
+- `observability_discovery`: List all available tools
 
 ### Website Tools
 - `website.fetch`: Fetch public URLs (SSRF-protected, size-limited)
 
-## Modularisation Status
+## Security Architecture
+
+### Permission System
+
+1. **Default Roles**: Tools without explicit `allowed_roles` use `default_allowed_roles` from config
+2. **Tool-Specific Roles**: Tools can override with explicit `allowed_roles`
+3. **User Approval**: Destructive operations require `user_approved: true`
+4. **High-Cost Protection**: Image/video/audio generation requires `cost_approved: true`
+
+### Cost Policy
+
+The `mcp_server/cost_policy.py` module:
+- Detects high-cost tools by name patterns
+- Checks for explicit `high_cost: true` in config
+- Validates cost approval in payload
+
+### Rate Limiting
+
+Multi-level rate limiting:
+- Global limit per tenant
+- Per-actor limit
+- Per-tool limit (future)
+
+## Tool Organization
 
 Currently, tools are organized in:
 - `mcp_server/server.py`: Core infrastructure + Memory/CRM tools
-- `mcp_server/crm_tools_ext.py`: Extended CRM tools
-- `mcp_server/website_fetch_tools.py`: Website tools
-
-**Future**: As tools grow, we will split into domain modules under `mcp_server/tools/`:
-- `mcp_server/tools/memory.py`
-- `mcp_server/tools/crm.py`
-- `mcp_server/tools/automation.py`
-- `mcp_server/tools/inbox.py`
-- `mcp_server/tools/files.py`
-
-Each module will:
-- Declare FastMCP tools for its domain
-- Contain small helper functions
-- Keep business logic close to tool definitions
+- `mcp_server/tool_aliases.py`: Dot-notation aliases (memory.search, memory.write)
+- `mcp_server/website_fetch_tools.py`: Website tools (SSRF-protected)
+- `mcp_server/cost_policy.py`: High-cost tool detection
 
 The generic infrastructure (rate limiting, permissions, logging, HTTP client) stays in `mcp_server/server.py`.
+
+## Removed Components
+
+The following have been removed as part of cleanup:
+- Automation tools (not properly configured)
+- Inbox tools (not properly configured)
+- File tools (not properly configured)
+- Workflow supervisor proxies (don't fit "MCP = Core Tools" architecture)
+- Workflow dot-aliases (removed with supervisor proxies)
+
+See [Complete Guide](COMPLETE_GUIDE.md) for current tool list.

@@ -10,11 +10,31 @@ All MCP protocol handling is delegated to FastMCP - no protocol-level manipulati
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, Dict
 
 from starlette.responses import JSONResponse
 
-from .server import mcp, _ALL_TOOLS, server_cfg
+from .server import mcp, server_cfg
+
+
+def _list_tool_names() -> list[str]:
+    """
+    Dynamically list all registered tool names from the MCP server.
+    
+    Returns:
+        Sorted list of tool names
+    """
+    tools_dict: Dict[str, Any] = {}
+    
+    # Try different ways to access tools from mcp object
+    if hasattr(mcp, "_router") and hasattr(mcp._router, "_tools"):
+        tools_dict = mcp._router._tools
+    elif hasattr(mcp, "_tools"):
+        tools_dict = mcp._tools
+    elif hasattr(mcp, "tools"):
+        tools_dict = mcp.tools
+    
+    return sorted(list(tools_dict.keys()))
 
 
 def main() -> None:
@@ -51,13 +71,14 @@ def main() -> None:
                     
                     # Handle /mcp/discovery endpoint (custom endpoint, not part of MCP protocol)
                     if path == "/mcp/discovery" and method == "GET":
+                        tool_names = _list_tool_names()
                         response = JSONResponse({
                             "version": "1.0",
                             "server": server_cfg.get("name", "simple-gpt-mcp"),
                             "transport": "streamable-http",
                             "endpoint": "/mcp",
-                            "tools": sorted([{"name": name} for name in _ALL_TOOLS], key=lambda x: x["name"]),
-                            "tool_count": len(_ALL_TOOLS),
+                            "tools": [{"name": name} for name in tool_names],
+                            "tool_count": len(tool_names),
                             "note": "For detailed tool information, use the MCP protocol endpoint /mcp or call observability.discovery tool",
                         })
                         await response(scope, receive, send)

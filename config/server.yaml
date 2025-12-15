@@ -5,11 +5,6 @@ tenants:
     services:
       memory: "http://127.0.0.1:8000/mcp/memory"
       crm: "http://127.0.0.1:8000/mcp/crm"
-      support: "http://127.0.0.1:8000/support"
-      marketing: "http://127.0.0.1:8000/marketing"
-      website: "http://127.0.0.1:8000/website"
-      backoffice: "http://127.0.0.1:8000/backoffice"
-      onboarding: "http://127.0.0.1:8000/onboarding"
 security:
   tools:
     memory_delete:
