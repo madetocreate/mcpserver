@@ -21,6 +21,14 @@ from .config import load_config
 from .cost_policy import has_cost_approval, is_high_cost_tool
 from .observability import AuditLogger, InMemoryMetrics
 from .rate_limits import AdvancedRateLimiter, RateLimitError
+from .trace_context import (
+    create_context,
+    get_propagation_headers,
+    get_current_context,
+    set_current_context,
+    TRACEPARENT_HEADER,
+    CORRELATION_ID_HEADER,
+)
 
 
 CONFIG_PATH = Path(
@@ -55,6 +63,129 @@ class PermissionError(MCPClientError):
 class BackendError(MCPServerError):
     """Backend service errors."""
     pass
+
+
+class CircuitBreakerError(MCPServerError):
+    """Circuit breaker is open - service temporarily unavailable."""
+    def __init__(self, service: str, reset_after: float):
+        self.service = service
+        self.reset_after = reset_after
+        super().__init__(f"Circuit breaker open for {service}, retry after {reset_after:.1f}s")
+
+
+class CircuitBreaker:
+    """
+    Circuit Breaker pattern implementation for backend service calls.
+    
+    States:
+    - CLOSED: Normal operation, requests pass through
+    - OPEN: Service is failing, requests are rejected immediately
+    - HALF_OPEN: Testing if service has recovered
+    
+    Best Practice 2025: Prevents cascading failures and allows services to recover.
+    """
+    
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        recovery_timeout: float = 30.0,
+        half_open_max_calls: int = 3,
+    ):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.half_open_max_calls = half_open_max_calls
+        
+        # State per service
+        self._failures: Dict[str, int] = {}
+        self._last_failure_time: Dict[str, float] = {}
+        self._state: Dict[str, str] = {}  # "closed", "open", "half_open"
+        self._half_open_calls: Dict[str, int] = {}
+    
+    def _get_state(self, service: str) -> str:
+        """Get current circuit state for a service."""
+        state = self._state.get(service, "closed")
+        
+        if state == "open":
+            # Check if recovery timeout has passed
+            last_failure = self._last_failure_time.get(service, 0)
+            if time.time() - last_failure >= self.recovery_timeout:
+                self._state[service] = "half_open"
+                self._half_open_calls[service] = 0
+                return "half_open"
+        
+        return state
+    
+    def can_execute(self, service: str) -> bool:
+        """Check if a request can be executed for this service."""
+        state = self._get_state(service)
+        
+        if state == "closed":
+            return True
+        elif state == "half_open":
+            # Allow limited calls in half-open state
+            calls = self._half_open_calls.get(service, 0)
+            return calls < self.half_open_max_calls
+        else:  # open
+            return False
+    
+    def get_reset_time(self, service: str) -> float:
+        """Get seconds until circuit might reset."""
+        last_failure = self._last_failure_time.get(service, 0)
+        elapsed = time.time() - last_failure
+        return max(0, self.recovery_timeout - elapsed)
+    
+    def record_success(self, service: str) -> None:
+        """Record a successful call."""
+        state = self._get_state(service)
+        
+        if state == "half_open":
+            # Success in half-open: close the circuit
+            self._state[service] = "closed"
+            self._failures[service] = 0
+            self._half_open_calls[service] = 0
+        elif state == "closed":
+            # Reset failure count on success
+            self._failures[service] = 0
+    
+    def record_failure(self, service: str) -> None:
+        """Record a failed call."""
+        state = self._get_state(service)
+        
+        if state == "half_open":
+            # Failure in half-open: open the circuit again
+            self._state[service] = "open"
+            self._last_failure_time[service] = time.time()
+            self._half_open_calls[service] = 0
+        else:
+            # Increment failure count
+            failures = self._failures.get(service, 0) + 1
+            self._failures[service] = failures
+            self._last_failure_time[service] = time.time()
+            
+            # Open circuit if threshold reached
+            if failures >= self.failure_threshold:
+                self._state[service] = "open"
+    
+    def before_call(self, service: str) -> None:
+        """Called before making a request. Raises if circuit is open."""
+        if not self.can_execute(service):
+            reset_time = self.get_reset_time(service)
+            raise CircuitBreakerError(service, reset_time)
+        
+        state = self._get_state(service)
+        if state == "half_open":
+            self._half_open_calls[service] = self._half_open_calls.get(service, 0) + 1
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get status of all circuits for observability."""
+        status = {}
+        for service in set(self._state.keys()) | set(self._failures.keys()):
+            status[service] = {
+                "state": self._get_state(service),
+                "failures": self._failures.get(service, 0),
+                "reset_in": self.get_reset_time(service) if self._get_state(service) == "open" else 0,
+            }
+        return status
 
 
 
@@ -96,9 +227,18 @@ class PermissionChecker:
 
 
 class BackendClient:
-    def __init__(self, http_client: httpx.AsyncClient, config: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        config: Dict[str, Any],
+        circuit_breaker: Optional[CircuitBreaker] = None,
+    ) -> None:
         self.http_client = http_client
         self.config = config
+        # Security: Internal API key for backend requests
+        self.internal_api_key = os.getenv("BACKEND_INTERNAL_API_KEY", "").strip()
+        # Circuit breaker for resilience
+        self.circuit_breaker = circuit_breaker or CircuitBreaker()
 
     def _base_url(self, tenant_id: str, service: str) -> str:
         tenants = self.config.get("tenants", {})
@@ -127,8 +267,22 @@ class BackendClient:
         timeout: float = 10.0,
         retries: int = 2,
     ) -> Dict[str, Any]:
+        # Circuit breaker check
+        circuit_key = f"{tenant_id}:{service}"
+        self.circuit_breaker.before_call(circuit_key)
+        
         base = self._base_url(tenant_id, service)
         url = f"{base}/{path.lstrip('/')}"
+        
+        # Security: Set internal API key header if configured
+        headers: Dict[str, str] = {}
+        if self.internal_api_key:
+            headers["x-internal-api-key"] = self.internal_api_key
+        
+        # W3C Trace Context: Propagate trace headers to downstream services
+        trace_headers = get_propagation_headers()
+        headers.update(trace_headers)
+        
         last_exc: Optional[Exception] = None
         for attempt in range(retries + 1):
             try:
@@ -136,6 +290,7 @@ class BackendClient:
                     method=method.upper(),
                     url=url,
                     json=payload,
+                    headers=headers,
                     timeout=timeout,
                 )
                 status = response.status_code
@@ -145,17 +300,32 @@ class BackendClient:
                     raise BackendError(f"Upstream {service} error {status}")
                 response.raise_for_status()
                 data = response.json()
+                
+                # Success: record in circuit breaker
+                self.circuit_breaker.record_success(circuit_key)
+                
                 if isinstance(data, dict):
                     return data
                 return {"result": data}
+            except CircuitBreakerError:
+                # Re-raise circuit breaker errors without recording as failure
+                raise
             except Exception as exc:
                 last_exc = exc
                 if attempt >= retries:
                     break
                 backoff = 0.3 * (2**attempt)
                 await asyncio.sleep(backoff)
+        
+        # All retries failed: record failure in circuit breaker
+        self.circuit_breaker.record_failure(circuit_key)
+        
         message = str(last_exc) if last_exc else "Unknown backend error"
         raise BackendError(message)
+    
+    def get_circuit_status(self) -> Dict[str, Any]:
+        """Get circuit breaker status for observability."""
+        return self.circuit_breaker.get_status()
 
 
 def setup_logger(config: Dict[str, Any]) -> logging.Logger:
@@ -204,6 +374,7 @@ class AppContext:
     logger: logging.Logger
     audit: AuditLogger
     metrics: InMemoryMetrics
+    circuit_breaker: CircuitBreaker
 
 
 TypedContext = Context[ServerSession, AppContext]
@@ -217,6 +388,9 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     # Configure HTTP client with connection pooling and timeouts
     server_cfg = CONFIG.get("server", {})
     http_limits = server_cfg.get("http_limits", {})
+    # Security: follow_redirects=False für interne Service Calls
+    # Redirects sind für interne Backend-Calls meist unnötig und können SSRF-Risiken erhöhen
+    # Wenn Redirects nötig sind: nur same-origin und explizit erlauben
     http_client = httpx.AsyncClient(
         limits=httpx.Limits(
             max_connections=int(http_limits.get("max_connections", 100)),
@@ -228,10 +402,18 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
             write=float(http_limits.get("write_timeout", 10.0)),
             pool=float(http_limits.get("pool_timeout", 5.0)),
         ),
-        follow_redirects=True,
+        follow_redirects=False,  # Security: Keine automatischen Redirects für interne Calls
     )
     
-    backend = BackendClient(http_client=http_client, config=CONFIG)
+    # Circuit breaker configuration from config or defaults
+    circuit_cfg = CONFIG.get("circuit_breaker", {})
+    circuit_breaker = CircuitBreaker(
+        failure_threshold=int(circuit_cfg.get("failure_threshold", 5)),
+        recovery_timeout=float(circuit_cfg.get("recovery_timeout", 30.0)),
+        half_open_max_calls=int(circuit_cfg.get("half_open_max_calls", 3)),
+    )
+    
+    backend = BackendClient(http_client=http_client, config=CONFIG, circuit_breaker=circuit_breaker)
     rate_limiter = AdvancedRateLimiter(CONFIG.get("rate_limits", {}))
     logs_dir = Path(__file__).resolve().parent.parent / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -246,6 +428,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         logger=logger,
         audit=audit,
         metrics=metrics,
+        circuit_breaker=circuit_breaker,
     )
     try:
         yield app_ctx
@@ -255,9 +438,19 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
 server_cfg = CONFIG.get("server", {})
 
-# Use 0.0.0.0 to accept all hosts (including ngrok) without Host header patching
-_server_host = os.getenv("MCP_SERVER_HOST", server_cfg.get("host", "0.0.0.0"))
+# Security: Default bind auf 127.0.0.1 (nicht 0.0.0.0) - nur localhost, nicht alle Interfaces
+# Für Production hinter Reverse-Proxy: MCP_SERVER_HOST=0.0.0.0 explizit setzen
+_server_host = os.getenv("MCP_SERVER_HOST", server_cfg.get("host", "127.0.0.1"))
 _server_port = int(os.getenv("MCP_SERVER_PORT", server_cfg.get("port", 9000)))
+
+# Security: In Production muss MCP_SERVER_TOKEN gesetzt sein
+app_env = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).lower()
+mcp_token = os.getenv("MCP_SERVER_TOKEN", "").strip()
+if app_env == "production" and not mcp_token:
+    raise RuntimeError(
+        "MCP_SERVER_TOKEN is required in production. "
+        "Set MCP_SERVER_TOKEN environment variable before starting the MCP server."
+    )
 
 # FastMCP Server - keep it simple for maximum compatibility
 # Removed stateless_http and json_response initially to match minimal server approach
@@ -294,12 +487,20 @@ def _build_base_payload(
     actor_role: str,
     **extra: Any,
 ) -> Dict[str, Any]:
-    """Build base payload with common fields and optional extras."""
+    """
+    Build base payload with common fields and optional extras.
+    
+    Security: actor/actor_role werden NACH extra gesetzt, damit extra diese Werte nicht überschreiben kann.
+    """
+    # Security: Entferne actor/actor_role aus extra falls vorhanden (Client-Input ignorieren)
+    extra_clean = {k: v for k, v in extra.items() if k not in ("actor", "actor_role")}
+    
+    # Security: actor/actor_role werden immer zuletzt gesetzt, damit extra sie nicht überschreiben kann
     payload: Dict[str, Any] = {
         "tenant_id": tenant_id,
-        "actor": actor,
-        "actor_role": actor_role,
-        **extra,
+        **extra_clean,
+        "actor": actor,  # Gesetzt nach extra, kann nicht überschrieben werden
+        "actor_role": actor_role,  # Gesetzt nach extra, kann nicht überschrieben werden
     }
     return payload
 
@@ -311,14 +512,27 @@ async def _invoke_backend_tool(
     method: str,
     path: str,
     tenant_id: str,
-    actor: str,
-    actor_role: str,
     payload_data: Dict[str, Any],
     timeout: float = 10.0,
 ) -> Dict[str, Any]:
-    """Helper function to invoke backend tool with standardized error handling."""
+    """
+    Helper function to invoke backend tool with standardized error handling.
+    
+    Security: actor/actor_role kommen aus Config, nicht aus Client-Input.
+    Client-kontrollierte Werte werden ignoriert, um Privilege-Escalation zu verhindern.
+    """
     ctx = _require_context(ctx)
-    payload = _build_base_payload(tenant_id, actor, actor_role, **payload_data)
+    
+    # Security: actor/actor_role immer aus Config, nie aus Client-Input
+    server_cfg = CONFIG.get("server", {})
+    security_cfg = CONFIG.get("security", {})
+    safe_actor = server_cfg.get("default_actor") or security_cfg.get("default_actor") or "mcp-server"
+    safe_actor_role = server_cfg.get("default_actor_role") or security_cfg.get("default_actor_role") or "Agent"
+    
+    # Entferne actor/actor_role aus payload_data falls vorhanden (Client-Input ignorieren)
+    payload_data_clean = {k: v for k, v in payload_data.items() if k not in ("actor", "actor_role")}
+    
+    payload = _build_base_payload(tenant_id, safe_actor, safe_actor_role, **payload_data_clean)
     return await _call_backend_tool(
         ctx=ctx,
         tool_name=tool_name,
@@ -326,8 +540,8 @@ async def _invoke_backend_tool(
         method=method,
         path=path,
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
+        actor=safe_actor,
+        actor_role=safe_actor_role,
         payload=payload,
         timeout=timeout,
     )
@@ -554,8 +768,6 @@ async def memory_search(
     query: str,
     limit: int = 20,
     include_archived: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -565,8 +777,6 @@ async def memory_search(
         method="POST",
         path="/search",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"query": query, "limit": limit, "include_archived": include_archived},
         timeout=10.0,
     )
@@ -582,14 +792,18 @@ async def memory_write(
     kind: str = "note",
     tags: Optional[List[str]] = None,
     correlation_id: Optional[str] = None,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
+    user_approved: bool = False,
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
+    """
+    Security: actor/actor_role entfernt - kommen aus Config, nicht aus Client-Input.
+    Note: user_approved parameter added for approval flow compatibility.
+    """
     payload_data: Dict[str, Any] = {
         "content": content,
         "kind": kind,
         "tags": tags or [],
+        "user_approved": user_approved,
     }
     if correlation_id:
         payload_data["correlation_id"] = correlation_id
@@ -600,8 +814,6 @@ async def memory_write(
         method="POST",
         path="/write",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data=payload_data,
         timeout=10.0,
     )
@@ -616,10 +828,11 @@ async def memory_delete(
     memory_id: str,
     soft_delete: bool = True,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
+    """
+    Security: actor/actor_role entfernt - kommen aus Config, nicht aus Client-Input.
+    """
     return await _invoke_backend_tool(
         ctx=ctx,
         tool_name="memory_delete",
@@ -627,8 +840,6 @@ async def memory_delete(
         method="POST",
         path="/delete",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"memory_id": memory_id, "soft_delete": soft_delete, "user_approved": user_approved},
         timeout=10.0,
     )
@@ -642,8 +853,6 @@ async def memory_archive(
     tenant_id: str,
     memory_id: str,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -653,8 +862,6 @@ async def memory_archive(
         method="POST",
         path="/archive",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"memory_id": memory_id, "user_approved": user_approved},
         timeout=10.0,
     )
@@ -667,8 +874,6 @@ async def memory_archive(
 async def memory_telemetry(
     tenant_id: str,
     window_minutes: int = 60,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -678,8 +883,6 @@ async def memory_telemetry(
         method="GET",
         path="/telemetry",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"window_minutes": window_minutes},
         timeout=5.0,
     )
@@ -692,8 +895,6 @@ async def memory_telemetry(
 async def crm_lookup_customer(
     tenant_id: str,
     customer_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -703,8 +904,6 @@ async def crm_lookup_customer(
         method="POST",
         path="/lookup_customer",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"customer_id": customer_id},
         timeout=5.0,
     )
@@ -718,8 +917,6 @@ async def crm_search_customers(
     tenant_id: str,
     query: str,
     limit: int = 20,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -729,8 +926,6 @@ async def crm_search_customers(
         method="POST",
         path="/search_customers",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"query": query, "limit": limit},
         timeout=10.0,
     )
@@ -745,8 +940,6 @@ async def crm_create_note(
     customer_id: str,
     text: str,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -756,8 +949,6 @@ async def crm_create_note(
         method="POST",
         path="/create_note",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"customer_id": customer_id, "text": text, "user_approved": user_approved},
         timeout=10.0,
     )
@@ -773,8 +964,6 @@ async def crm_update_pipeline(
     stage: str,
     value: Optional[float] = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     payload_data: Dict[str, Any] = {
@@ -791,8 +980,6 @@ async def crm_update_pipeline(
         method="POST",
         path="/update_pipeline",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data=payload_data,
         timeout=10.0,
     )
@@ -811,8 +998,6 @@ async def crm_link_entities(
     to_id: str,
     association_type: str = "related",
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -822,8 +1007,6 @@ async def crm_link_entities(
         method="POST",
         path="/link_entities",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "from_type": from_type,
             "from_id": from_id,
@@ -845,8 +1028,6 @@ async def crm_list_associations(
     entity_type: str,
     entity_id: str,
     limit: int = 100,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -856,8 +1037,6 @@ async def crm_list_associations(
         method="POST",
         path="/list_associations",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"entity_type": entity_type, "entity_id": entity_id, "limit": limit},
         timeout=10.0,
     )
@@ -872,8 +1051,6 @@ async def crm_get_timeline(
     entity_type: str,
     entity_id: str,
     limit: int = 50,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -883,8 +1060,6 @@ async def crm_get_timeline(
         method="POST",
         path="/timeline",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"entity_type": entity_type, "entity_id": entity_id, "limit": limit},
         timeout=10.0,
     )
@@ -901,8 +1076,6 @@ async def crm_define_pipeline(
     stages: List[Dict[str, Any]],
     is_default: bool = False,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -912,8 +1085,6 @@ async def crm_define_pipeline(
         method="POST",
         path="/define_pipeline",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "object_type": object_type,
             "name": name,
@@ -932,8 +1103,6 @@ async def crm_define_pipeline(
 async def crm_list_pipelines(
     tenant_id: str,
     object_type: Optional[str] = None,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -943,8 +1112,6 @@ async def crm_list_pipelines(
         method="POST",
         path="/list_pipelines",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"object_type": object_type},
         timeout=10.0,
     )
@@ -963,8 +1130,6 @@ async def crm_upsert_contact(
     phone: Optional[str] = None,
     company_name: Optional[str] = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -974,8 +1139,6 @@ async def crm_upsert_contact(
         method="POST",
         path="/upsert_contact",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "email": email,
             "first_name": first_name,
@@ -1000,8 +1163,6 @@ async def crm_upsert_company(
     company_size: Optional[str] = None,
     lifecycle_stage: Optional[str] = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1011,8 +1172,6 @@ async def crm_upsert_company(
         method="POST",
         path="/upsert_company",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "name": name,
             "domain": domain,
@@ -1041,8 +1200,6 @@ async def crm_create_deal(
     primary_contact_id: Optional[str] = None,
     expected_close_date: Optional[str] = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1052,8 +1209,6 @@ async def crm_create_deal(
         method="POST",
         path="/create_deal",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "name": name,
             "amount": amount,
@@ -1080,8 +1235,6 @@ async def crm_merge_contacts(
     target_contact_id: str,
     reason: Optional[str] = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1091,8 +1244,6 @@ async def crm_merge_contacts(
         method="POST",
         path="/merge_contacts",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "source_contact_id": source_contact_id,
             "target_contact_id": target_contact_id,
@@ -1114,8 +1265,6 @@ async def crm_audit_query(
     entity_id: Optional[str] = None,
     action: Optional[str] = None,
     limit: int = 100,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1125,8 +1274,6 @@ async def crm_audit_query(
         method="POST",
         path="/audit_query",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"entity_type": entity_type, "entity_id": entity_id, "action": action, "limit": limit},
         timeout=10.0,
     )
@@ -1139,8 +1286,6 @@ async def crm_audit_query(
 async def crm_events_pull(
     tenant_id: str,
     limit: int = 50,
-    actor: str = "orchestrator",
-    actor_role: str = "Automation-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1150,8 +1295,6 @@ async def crm_events_pull(
         method="POST",
         path="/events_pull",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"limit": limit},
         timeout=10.0,
     )
@@ -1165,8 +1308,6 @@ async def crm_events_ack(
     tenant_id: str,
     event_id: str,
     status: str = "processed",
-    actor: str = "orchestrator",
-    actor_role: str = "Automation-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1176,8 +1317,6 @@ async def crm_events_ack(
         method="POST",
         path="/events_ack",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"event_id": event_id, "status": status},
         timeout=10.0,
     )
@@ -1196,8 +1335,6 @@ async def crm_create_task(
     description: str = "",
     due_at: str | None = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1207,8 +1344,6 @@ async def crm_create_task(
         method="POST",
         path="/create_task",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "entity_type": entity_type,
             "entity_id": entity_id,
@@ -1229,8 +1364,6 @@ async def crm_complete_task(
     tenant_id: str,
     task_id: str,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1240,8 +1373,6 @@ async def crm_complete_task(
         method="POST",
         path="/complete_task",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"task_id": task_id, "user_approved": user_approved},
         timeout=10.0,
     )
@@ -1260,8 +1391,6 @@ async def crm_log_call(
     duration_seconds: int | None = None,
     occurred_at: str | None = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1271,8 +1400,6 @@ async def crm_log_call(
         method="POST",
         path="/log_call",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "entity_type": entity_type,
             "entity_id": entity_id,
@@ -1299,8 +1426,6 @@ async def crm_log_meeting(
     start_at: str | None = None,
     end_at: str | None = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1310,8 +1435,6 @@ async def crm_log_meeting(
         method="POST",
         path="/log_meeting",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "entity_type": entity_type,
             "entity_id": entity_id,
@@ -1343,8 +1466,6 @@ async def crm_define_property(
     archived: bool = False,
     description: str | None = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1354,8 +1475,6 @@ async def crm_define_property(
         method="POST",
         path="/define_property",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "object_type": object_type,
             "name": name,
@@ -1380,8 +1499,6 @@ async def crm_define_property(
 async def crm_list_properties(
     tenant_id: str,
     object_type: str,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1391,8 +1508,6 @@ async def crm_list_properties(
         method="POST",
         path="/list_properties",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"object_type": object_type},
         timeout=10.0,
     )
@@ -1409,8 +1524,6 @@ async def crm_set_property(
     property_name: str,
     value: Any = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1420,8 +1533,6 @@ async def crm_set_property(
         method="POST",
         path="/set_property",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={
             "object_type": object_type,
             "record_id": record_id,
@@ -1442,8 +1553,6 @@ async def crm_get_property(
     object_type: str,
     record_id: str,
     property_name: str,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1453,8 +1562,6 @@ async def crm_get_property(
         method="POST",
         path="/get_property",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"object_type": object_type, "record_id": record_id, "property_name": property_name},
         timeout=10.0,
     )
@@ -1473,8 +1580,6 @@ async def crm_search_advanced(
     offset: int = 0,
     sort_by: str = "updated_at",
     sort_dir: str = "DESC",
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1484,8 +1589,6 @@ async def crm_search_advanced(
         method="POST",
         path="/search_advanced",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"object_type": object_type, "filters": filters, "limit": limit, "offset": offset, "sort_by": sort_by, "sort_dir": sort_dir},
         timeout=10.0,
     )
@@ -1502,8 +1605,6 @@ async def crm_create_segment(
     definition: Dict[str, Any],
     is_dynamic: bool = True,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1513,8 +1614,6 @@ async def crm_create_segment(
         method="POST",
         path="/create_segment",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"object_type": object_type, "name": name, "definition": definition, "is_dynamic": is_dynamic, "user_approved": user_approved},
         timeout=10.0,
     )
@@ -1527,8 +1626,6 @@ async def crm_create_segment(
 async def crm_list_segments(
     tenant_id: str,
     object_type: Optional[str] = None,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1538,8 +1635,6 @@ async def crm_list_segments(
         method="POST",
         path="/list_segments",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"object_type": object_type},
         timeout=10.0,
     )
@@ -1554,8 +1649,6 @@ async def crm_segment_members(
     segment_id: str,
     limit: int = 50,
     offset: int = 0,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1565,8 +1658,6 @@ async def crm_segment_members(
         method="POST",
         path="/segment_members",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"segment_id": segment_id, "limit": limit, "offset": offset},
         timeout=10.0,
     )
@@ -1584,8 +1675,6 @@ async def crm_webhook_create(
     secret: str | None = None,
     event_types: list[str] | None = None,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "Automation-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1595,8 +1684,6 @@ async def crm_webhook_create(
         method="POST",
         path="/webhook_create",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"name": name, "endpoint_url": endpoint_url, "secret": secret, "event_types": event_types, "user_approved": user_approved},
         timeout=10.0,
     )
@@ -1608,8 +1695,6 @@ async def crm_webhook_create(
 )
 async def crm_webhook_list(
     tenant_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Automation-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1619,8 +1704,6 @@ async def crm_webhook_list(
         method="POST",
         path="/webhook_list",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={},
         timeout=10.0,
     )
@@ -1634,8 +1717,6 @@ async def crm_webhook_disable(
     tenant_id: str,
     subscription_id: str,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "Automation-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1645,8 +1726,6 @@ async def crm_webhook_disable(
         method="POST",
         path="/webhook_disable",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"subscription_id": subscription_id, "user_approved": user_approved},
         timeout=10.0,
     )
@@ -1659,8 +1738,6 @@ async def crm_webhook_disable(
 async def crm_webhook_dispatch(
     tenant_id: str,
     limit: int = 50,
-    actor: str = "orchestrator",
-    actor_role: str = "Automation-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1670,8 +1747,6 @@ async def crm_webhook_dispatch(
         method="POST",
         path="/webhook_dispatch",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"limit": limit},
         timeout=30.0,
     )
@@ -1689,8 +1764,6 @@ async def crm_define_object_type(
     description: str | None = None,
     archived: bool = False,
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1700,8 +1773,6 @@ async def crm_define_object_type(
         method="POST",
         path="/define_object_type",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"object_type": object_type, "label": label, "plural_label": plural_label, "description": description, "archived": archived, "user_approved": user_approved},
         timeout=10.0,
     )
@@ -1716,8 +1787,6 @@ async def crm_create_object_record(
     object_type: str,
     properties: Dict[str, Any],
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1727,8 +1796,6 @@ async def crm_create_object_record(
         method="POST",
         path="/create_object_record",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"object_type": object_type, "properties": properties, "user_approved": user_approved},
         timeout=10.0,
     )
@@ -1741,8 +1808,6 @@ async def crm_create_object_record(
 async def crm_get_object_record(
     tenant_id: str,
     record_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1752,8 +1817,6 @@ async def crm_get_object_record(
         method="POST",
         path="/get_object_record",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"record_id": record_id},
         timeout=10.0,
     )
@@ -1768,8 +1831,6 @@ async def crm_update_object_record(
     record_id: str,
     patch: Dict[str, Any],
     user_approved: bool = False,
-    actor: str = "orchestrator",
-    actor_role: str = "CRM-Supervisor",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     return await _invoke_backend_tool(
@@ -1779,8 +1840,6 @@ async def crm_update_object_record(
         method="POST",
         path="/update_object_record",
         tenant_id=tenant_id,
-        actor=actor,
-        actor_role=actor_role,
         payload_data={"record_id": record_id, "patch": patch, "user_approved": user_approved},
         timeout=10.0,
     )
@@ -1792,12 +1851,17 @@ async def crm_update_object_record(
 )
 async def observability_metrics(
     tenant_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     ctx = _require_context(ctx)
     app = ctx.request_context.lifespan_context
+    
+    # Security: Get actor/actor_role from config, not from client input
+    server_cfg = CONFIG.get("server", {})
+    security_cfg = CONFIG.get("security", {})
+    actor = server_cfg.get("default_actor") or security_cfg.get("default_actor") or "mcp-server"
+    actor_role = server_cfg.get("default_actor_role") or security_cfg.get("default_actor_role") or "Agent"
+    
     app.rate_limiter.check(tenant_id, "observability_metrics", actor)
     app.permissions.ensure_allowed("observability_metrics", actor_role)
     snapshot = app.metrics.snapshot()
@@ -1808,18 +1872,64 @@ async def observability_metrics(
 
 
 @mcp.tool(
+    name="observability_circuit_breaker",
+    description="Return circuit breaker status for all backend services.",
+)
+async def observability_circuit_breaker(
+    tenant_id: str,
+    ctx: TypedContext | None = None,
+) -> Dict[str, Any]:
+    """
+    Return circuit breaker status for observability.
+    
+    Shows:
+    - State per service (closed, open, half_open)
+    - Failure count
+    - Time until reset (if open)
+    """
+    ctx = _require_context(ctx)
+    app = ctx.request_context.lifespan_context
+    
+    # Security: Get actor/actor_role from config, not from client input
+    server_cfg = CONFIG.get("server", {})
+    security_cfg = CONFIG.get("security", {})
+    actor = server_cfg.get("default_actor") or security_cfg.get("default_actor") or "mcp-server"
+    actor_role = server_cfg.get("default_actor_role") or security_cfg.get("default_actor_role") or "Agent"
+    
+    app.rate_limiter.check(tenant_id, "observability_circuit_breaker", actor)
+    app.permissions.ensure_allowed("observability_circuit_breaker", actor_role)
+    
+    circuit_status = app.circuit_breaker.get_status()
+    
+    return {
+        "tenant_id": tenant_id,
+        "circuit_breaker": circuit_status,
+        "config": {
+            "failure_threshold": app.circuit_breaker.failure_threshold,
+            "recovery_timeout": app.circuit_breaker.recovery_timeout,
+            "half_open_max_calls": app.circuit_breaker.half_open_max_calls,
+        },
+    }
+
+
+@mcp.tool(
     name="observability_health",
     description="Return basic configuration and status information about the MCP server.",
 )
 async def observability_health(
     tenant_id: str,
     include_config: bool = True,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     ctx = _require_context(ctx)
     app = ctx.request_context.lifespan_context
+    
+    # Security: Get actor/actor_role from config, not from client input
+    server_cfg = CONFIG.get("server", {})
+    security_cfg = CONFIG.get("security", {})
+    actor = server_cfg.get("default_actor") or security_cfg.get("default_actor") or "mcp-server"
+    actor_role = server_cfg.get("default_actor_role") or security_cfg.get("default_actor_role") or "Agent"
+    
     app.rate_limiter.check(tenant_id, "observability_health", actor)
     app.permissions.ensure_allowed("observability_health", actor_role)
     server_cfg = app.config.get("server", {})
@@ -1846,12 +1956,17 @@ async def observability_health(
 )
 async def observability_discovery(
     tenant_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     ctx = _require_context(ctx)
     app = ctx.request_context.lifespan_context
+    
+    # Security: Get actor/actor_role from config, not from client input
+    server_cfg = CONFIG.get("server", {})
+    security_cfg = CONFIG.get("security", {})
+    actor = server_cfg.get("default_actor") or security_cfg.get("default_actor") or "mcp-server"
+    actor_role = server_cfg.get("default_actor_role") or security_cfg.get("default_actor_role") or "Agent"
+    
     app.rate_limiter.check(tenant_id, "observability_discovery", actor)
     app.permissions.ensure_allowed("observability_discovery", actor_role)
 
@@ -1909,11 +2024,9 @@ async def observability_discovery(
 )
 async def observability_metrics_dot(
     tenant_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
-    return await observability_metrics(tenant_id=tenant_id, actor=actor, actor_role=actor_role, ctx=ctx)
+    return await observability_metrics(tenant_id=tenant_id, ctx=ctx)
 
 @mcp.tool(
     name="observability.health",
@@ -1921,11 +2034,9 @@ async def observability_metrics_dot(
 )
 async def observability_health_dot(
     tenant_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
-    return await observability_health(tenant_id=tenant_id, actor=actor, actor_role=actor_role, ctx=ctx)
+    return await observability_health(tenant_id=tenant_id, ctx=ctx)
 
 @mcp.tool(
     name="observability.discovery",
@@ -1933,24 +2044,57 @@ async def observability_health_dot(
 )
 async def observability_discovery_dot(
     tenant_id: str,
-    actor: str = "orchestrator",
-    actor_role: str = "Orchestrator",
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
-    return await observability_discovery(tenant_id=tenant_id, actor=actor, actor_role=actor_role, ctx=ctx)
+    return await observability_discovery(tenant_id=tenant_id, ctx=ctx)
 
 
-from mcp_server.tool_aliases import register_dot_alias_tools
 from mcp_server.website_fetch_tools import register_website_fetch_tools
-from mcp_server.real_estate_tools import (
-    real_estate_create_property,
-    real_estate_generate_expose,
-    real_estate_validate_geg87,
-    real_estate_create_viewing,
-    real_estate_process_lead,
-    real_estate_match_lead,
-    real_estate_get_wizard_checklist,
-)
 
-register_dot_alias_tools(mcp, _invoke_backend_tool)
+def _env_flag(name: str, default: str) -> bool:
+    v = os.getenv(name, default).strip().lower()
+    return v not in {"0", "false", "no", "off", ""}
+
+def _tool_profile() -> str:
+    return os.getenv("MCP_TOOL_PROFILE", "core").strip().lower()
+
+def _core_allowlist() -> set[str]:
+    return {
+        "website.fetch",
+        "memory_search",
+        "memory_write",
+        "memory_telemetry",
+        "observability_discovery",
+        "observability_health",
+        "observability_metrics",
+        "crm_lookup_customer",
+        "crm_search_customers",
+        "crm_get_timeline",
+        "crm_list_properties",
+        "crm_list_pipelines",
+        "crm_list_associations",
+    }
+
+def _apply_tool_allowlist() -> None:
+    profile = _tool_profile()
+    if profile == "full":
+        return
+    allow = _core_allowlist()
+    tool_manager = getattr(mcp, "_tool_manager", None)
+    tools = getattr(tool_manager, "_tools", None) if tool_manager is not None else None
+    if not isinstance(tools, dict):
+        return
+    for name in list(tools.keys()):
+        if name not in allow:
+            tools.pop(name, None)
+
 register_website_fetch_tools(mcp)
+
+if _env_flag("MCP_ENABLE_DOT_ALIASES", "0"):
+    from mcp_server.tool_aliases import register_dot_alias_tools
+    register_dot_alias_tools(mcp, _invoke_backend_tool)
+
+if _env_flag("MCP_ENABLE_REAL_ESTATE", "0"):
+    import mcp_server.real_estate_tools  # noqa: F401
+
+_apply_tool_allowlist()

@@ -20,21 +20,24 @@ from .server import mcp, server_cfg
 def _list_tool_names() -> list[str]:
     """
     Dynamically list all registered tool names from the MCP server.
-    
-    Returns:
-        Sorted list of tool names
+
+    FastMCP stores tools in different places depending on version.
+    We check the known locations in a safe order.
     """
     tools_dict: Dict[str, Any] = {}
-    
-    # Try different ways to access tools from mcp object
-    if hasattr(mcp, "_router") and hasattr(mcp._router, "_tools"):
+
+    if hasattr(mcp, "_tool_manager") and hasattr(mcp._tool_manager, "_tools"):
+        tools_dict = mcp._tool_manager._tools
+    elif hasattr(mcp, "_router") and hasattr(mcp._router, "_tools"):
         tools_dict = mcp._router._tools
     elif hasattr(mcp, "_tools"):
         tools_dict = mcp._tools
     elif hasattr(mcp, "tools"):
         tools_dict = mcp.tools
-    
-    return sorted(list(tools_dict.keys()))
+
+    if isinstance(tools_dict, dict):
+        return sorted(list(tools_dict.keys()))
+    return []
 
 
 def main() -> None:
@@ -54,15 +57,69 @@ def main() -> None:
                     path = scope.get("path", "")
                     method = scope.get("method", "")
                     
+                    # Security: Bearer token authentication for /mcp endpoints (except /mcp/discovery)
+                    if path.startswith("/mcp") and path != "/mcp/discovery":
+                        import os
+                        import logging
+                        logger = logging.getLogger("mcp_server.wrapper")
+                        
+                        # Extract headers
+                        headers_dict = {k.decode("utf-8", errors="ignore"): v.decode("utf-8", errors="ignore") 
+                                       for k, v in scope.get("headers", [])}
+                        
+                        # Check for Bearer token
+                        expected_token = os.getenv("MCP_SERVER_TOKEN", "").strip()
+                        app_env = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).lower()
+                        
+                        # In Production: Token ist Pflicht
+                        if app_env == "production" and not expected_token:
+                            logger.error("[ASGI] MCP_SERVER_TOKEN not set in production")
+                            from starlette.responses import JSONResponse
+                            response = JSONResponse(
+                                {"error": "server_error", "message": "MCP_SERVER_TOKEN not configured"},
+                                status_code=503,
+                            )
+                            await response(scope, receive, send)
+                            return
+                        
+                        if expected_token:
+                            auth_header = headers_dict.get("authorization", "")
+                            if not auth_header.startswith("Bearer "):
+                                logger.warning(f"[ASGI] Missing or invalid Authorization header for {method} {path}")
+                                from starlette.responses import JSONResponse
+                                response = JSONResponse(
+                                    {"error": "unauthorized", "message": "Missing or invalid Authorization header"},
+                                    status_code=401,
+                                    headers={"WWW-Authenticate": "Bearer"},
+                                )
+                                await response(scope, receive, send)
+                                return
+                            
+                            token = auth_header[7:]  # Remove "Bearer "
+                            if token != expected_token:
+                                logger.warning(f"[ASGI] Invalid token for {method} {path}")
+                                from starlette.responses import JSONResponse
+                                response = JSONResponse(
+                                    {"error": "unauthorized", "message": "Invalid token"},
+                                    status_code=401,
+                                    headers={"WWW-Authenticate": "Bearer"},
+                                )
+                                await response(scope, receive, send)
+                                return
+                            
+                            logger.debug(f"[ASGI] Token authenticated for {method} {path}")
+                    
                     # Enhanced logging for /mcp requests
                     if path.startswith("/mcp"):
                         import logging
                         logger = logging.getLogger("mcp_server.wrapper")
                         query_str = scope.get("query_string", b"").decode("utf-8", errors="ignore")
                         
-                        # Log all headers for debugging
+                        # Log all headers for debugging (but not token value)
                         headers_dict = {k.decode("utf-8", errors="ignore"): v.decode("utf-8", errors="ignore") 
                                        for k, v in scope.get("headers", [])}
+                        safe_headers = {k: ("***" if k.lower() == "authorization" else v) 
+                                       for k, v in headers_dict.items()}
                         logger.info(f"[ASGI] {method} {path}?{query_str}")
                         if "accept" in headers_dict:
                             logger.info(f"[ASGI] Accept header: {headers_dict['accept']}")
@@ -115,8 +172,11 @@ def main() -> None:
         
         try:
             # Use standard streamable-http transport - let FastMCP handle all protocol details
-            print(f"Starting MCP server on http://0.0.0.0:9000/mcp")
-            print(f"Discovery endpoint: http://0.0.0.0:9000/mcp/discovery")
+            import os
+            host = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
+            port = os.getenv("MCP_SERVER_PORT", "9000")
+            print(f"Starting MCP server on http://{host}:{port}/mcp")
+            print(f"Discovery endpoint: http://{host}:{port}/mcp/discovery")
             mcp.run(transport="streamable-http")
         finally:
             # Restore original Config.__init__

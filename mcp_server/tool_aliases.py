@@ -7,26 +7,28 @@ from mcp.server.fastmcp import FastMCP
 InvokeBackendTool = Callable[..., Awaitable[Dict[str, Any]]]
 
 def register_dot_alias_tools(mcp: FastMCP, invoke_backend_tool: InvokeBackendTool) -> None:
+    """
+    Register dot-notation alias tools (e.g., memory.search, memory.write).
+    
+    Note: invoke_backend_tool signature is _invoke_backend_tool which doesn't accept
+    actor/actor_role parameters (they come from config). These kwargs are ignored.
+    """
     @mcp.tool(name="memory.search", description="Search tenant memories.")
     async def memory_search(
         tenant_id: str,
         query: str,
         limit: int = 20,
         include_archived: bool = False,
-        actor: str = "orchestrator",
-        actor_role: str = "Orchestrator",
         ctx: Any = None,
     ) -> Dict[str, Any]:
         payload = {"query": query, "limit": limit, "include_archived": include_archived}
         return await invoke_backend_tool(
             ctx=ctx,
-            tool_name="memory.search",
+            tool_name="memory_search",
             service="memory",
             method="POST",
             path="/search",
             tenant_id=tenant_id,
-            actor=actor,
-            actor_role=actor_role,
             payload_data=payload,
             timeout=15.0,
         )
@@ -37,20 +39,17 @@ def register_dot_alias_tools(mcp: FastMCP, invoke_backend_tool: InvokeBackendToo
         content: str,
         kind: str = "note",
         tags: Optional[list[str]] = None,
-        actor: str = "orchestrator",
-        actor_role: str = "Orchestrator",
+        user_approved: bool = False,
         ctx: Any = None,
     ) -> Dict[str, Any]:
-        payload = {"content": content, "kind": kind, "tags": tags or [], "actor": actor, "actor_role": actor_role}
+        payload = {"content": content, "kind": kind, "tags": tags or [], "user_approved": user_approved}
         return await invoke_backend_tool(
             ctx=ctx,
-            tool_name="memory.write",
+            tool_name="memory_write",
             service="memory",
             method="POST",
             path="/write",
             tenant_id=tenant_id,
-            actor=actor,
-            actor_role=actor_role,
             payload_data=payload,
             timeout=15.0,
         )

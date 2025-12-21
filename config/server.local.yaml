@@ -3,6 +3,7 @@ tenants:
     services:
       memory: "http://127.0.0.1:8011/mcp/memory"
       crm: "http://127.0.0.1:8000/mcp/crm"
+      backend: http://127.0.0.1:8000
 security:
   default_allowed_roles:
     - Admin
