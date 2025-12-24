@@ -236,7 +236,10 @@ class BackendClient:
         self.http_client = http_client
         self.config = config
         # Security: Internal API key for backend requests
-        self.internal_api_key = os.getenv("BACKEND_INTERNAL_API_KEY", "").strip()
+        # P0 Fix: Support both BACKEND_INTERNAL_API_KEY and INTERNAL_API_KEY (fallback)
+        self.internal_api_key = (
+            os.getenv("BACKEND_INTERNAL_API_KEY") or os.getenv("INTERNAL_API_KEY") or ""
+        ).strip()
         # Circuit breaker for resilience
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
 
@@ -414,12 +417,26 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     )
     
     backend = BackendClient(http_client=http_client, config=CONFIG, circuit_breaker=circuit_breaker)
+    # P0 Fix: Warn if internal API key is missing (MCP->Backend calls may fail)
+    if not backend.internal_api_key:
+        logger.warning(
+            "Internal API key missing (BACKEND_INTERNAL_API_KEY or INTERNAL_API_KEY not set). "
+            "MCP->Backend calls may fail with 401/403."
+        )
     rate_limiter = AdvancedRateLimiter(CONFIG.get("rate_limits", {}))
     logs_dir = Path(__file__).resolve().parent.parent / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     audit_path = logs_dir / "audit.log"
     audit = AuditLogger(path=str(audit_path))
     metrics = InMemoryMetrics()
+    
+    # P0 Fix: Share metrics instance with FastAPI app for /metrics endpoint
+    try:
+        from .http_app import set_shared_metrics
+        set_shared_metrics(metrics)
+    except Exception as e:
+        logger.warning(f"Failed to set shared metrics: {e}")
+    
     app_ctx = AppContext(
         config=CONFIG,
         backend=backend,
@@ -444,9 +461,10 @@ _server_host = os.getenv("MCP_SERVER_HOST", server_cfg.get("host", "127.0.0.1"))
 _server_port = int(os.getenv("MCP_SERVER_PORT", server_cfg.get("port", 9000)))
 
 # Security: In Production muss MCP_SERVER_TOKEN gesetzt sein
-app_env = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).lower()
+from .env_utils import is_production_env
+
 mcp_token = os.getenv("MCP_SERVER_TOKEN", "").strip()
-if app_env == "production" and not mcp_token:
+if is_production_env() and not mcp_token:
     raise RuntimeError(
         "MCP_SERVER_TOKEN is required in production. "
         "Set MCP_SERVER_TOKEN environment variable before starting the MCP server."
@@ -561,8 +579,31 @@ async def _call_backend_tool(
 ) -> Dict[str, Any]:
     app = ctx.request_context.lifespan_context
     
-    # Generate correlation ID if not present
-    correlation_id = payload.get("correlation_id") or _generate_correlation_id()
+    # Get correlation ID from headers, payload, or generate new
+    # Priority: headers > payload > generate
+    correlation_id = None
+    try:
+        # Try to get from request headers (if available in context)
+        # Note: FastMCP context may not expose headers directly, so we check payload first
+        correlation_id = payload.get("correlation_id")
+    except Exception:
+        pass
+    
+    # If not in payload, try to get from trace context
+    if not correlation_id:
+        try:
+            from .trace_context import get_current_context
+            trace_ctx = get_current_context()
+            if trace_ctx:
+                correlation_id = trace_ctx.get("correlation_id")
+        except Exception:
+            pass
+    
+    # Generate if still not present
+    if not correlation_id:
+        correlation_id = _generate_correlation_id()
+    
+    # Ensure correlation_id is in payload for backend propagation
     if "correlation_id" not in payload:
         payload["correlation_id"] = correlation_id
     
@@ -577,14 +618,28 @@ async def _call_backend_tool(
         app.rate_limiter.check(tenant_id, tool_name, actor)
         tool_cfg = app.permissions.ensure_allowed(tool_name, actor_role)
         
+        # Security: Remove user_approved from payload (LLM cannot control approval)
+        # Approval must come from trusted context (Header or server-config), not from tool args
+        payload.pop("user_approved", None)
+        
         # User approval check (for destructive actions)
+        # Security: Approval must come from trusted context, NOT from payload/tool args
         requires_approval = bool(tool_cfg.get("user_approval_required")) if tool_cfg else False
-        user_approved = bool(payload.get("user_approved", False))
-        if requires_approval and not user_approved:
-            error_code = "APPROVAL_REQUIRED"
-            raise PermissionError(
-                f"Tool {tool_name} requires user approval but 'user_approved' was false."
-            )
+        if requires_approval:
+            # Check for approval token in headers (trusted source)
+            # TODO: Extract approval token from request headers when FastMCP exposes them
+            # For now: require INTERNAL_CALL=true or approval via server-config
+            internal_call = payload.get("_internal_call", False)
+            approval_token = payload.get("_approval_token")  # From trusted header, not LLM
+            has_approval = bool(internal_call) or bool(approval_token)
+            
+            if not has_approval:
+                error_code = "APPROVAL_REQUIRED"
+                raise PermissionError(
+                    f"Tool {tool_name} requires user approval. "
+                    "Approval must come from trusted context (header x-approval-token or internal call), "
+                    "not from tool arguments."
+                )
         
         # High-cost gate (for expensive operations like image/video/audio generation)
         if is_high_cost_tool(tool_name, tool_cfg):
@@ -790,12 +845,19 @@ async def memory_write(
     tenant_id: str,
     content: str,
     kind: str = "note",
+    type: Optional[str] = None,
     tags: Optional[List[str]] = None,
     correlation_id: Optional[str] = None,
     user_approved: bool = False,
     ctx: TypedContext | None = None,
 ) -> Dict[str, Any]:
     """
+    Persist a new memory item for the tenant.
+    
+    Parameters:
+    - kind: MemoryKind (fact|preference|instruction|summary|note) - Memory-Klasse
+    - type: MemoryItemType (conversation_message|email|document|...) - Item-Typ/Herkunft, optional, default: "custom"
+    
     Security: actor/actor_role entfernt - kommen aus Config, nicht aus Client-Input.
     Note: user_approved parameter added for approval flow compatibility.
     """
@@ -805,6 +867,8 @@ async def memory_write(
         "tags": tags or [],
         "user_approved": user_approved,
     }
+    if type:
+        payload_data["type"] = type
     if correlation_id:
         payload_data["correlation_id"] = correlation_id
     return await _invoke_backend_tool(
@@ -2094,7 +2158,6 @@ if _env_flag("MCP_ENABLE_DOT_ALIASES", "0"):
     from mcp_server.tool_aliases import register_dot_alias_tools
     register_dot_alias_tools(mcp, _invoke_backend_tool)
 
-if _env_flag("MCP_ENABLE_REAL_ESTATE", "0"):
-    import mcp_server.real_estate_tools  # noqa: F401
+# Real Estate tools removed - no longer needed
 
 _apply_tool_allowlist()
