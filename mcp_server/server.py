@@ -623,21 +623,71 @@ async def _call_backend_tool(
         payload.pop("user_approved", None)
         
         # User approval check (for destructive actions)
-        # Security: Approval must come from trusted context, NOT from payload/tool args
+        # Security: Approval must come from trusted context (HTTP Header Token), NOT from payload/tool args
         requires_approval = bool(tool_cfg.get("user_approval_required")) if tool_cfg else False
         if requires_approval:
-            # Check for approval token in headers (trusted source)
-            # TODO: Extract approval token from request headers when FastMCP exposes them
-            # For now: require INTERNAL_CALL=true or approval via server-config
-            internal_call = payload.get("_internal_call", False)
-            approval_token = payload.get("_approval_token")  # From trusted header, not LLM
-            has_approval = bool(internal_call) or bool(approval_token)
+            # Defense-in-Depth: Verify approval token from HTTP headers
+            # Token is set by RequestContextMiddleware in http_app.py
+            approval_token = None
+            approval_tenant_id = None
+            approval_user_id = None
             
-            if not has_approval:
+            # Try to get approval token from request context (set by middleware)
+            try:
+                # Access request state from FastAPI middleware
+                # ctx.request_context may contain the FastAPI request object
+                request = getattr(ctx.request_context, "request", None)
+                if request and hasattr(request, "state"):
+                    approval_token = getattr(request.state, "approval_token", None)
+                    approval_tenant_id = getattr(request.state, "tenant_id", None)
+                    approval_user_id = getattr(request.state, "user_id", None)
+            except Exception as e:
+                logger.debug(f"Could not access request state for approval token: {e}")
+            
+            # Fallback: Check for internal call marker (for server-to-server calls)
+            internal_call = payload.get("_internal_call", False)
+            
+            if approval_token:
+                # Verify approval token
+                from .approval import verify_approval_token
+                
+                ok, reason, claims = verify_approval_token(
+                    token=approval_token,
+                    expected_tool=tool_name,
+                    tenant_id=approval_tenant_id or tenant_id,
+                    user_id=approval_user_id or actor,
+                )
+                
+                if not ok:
+                    error_code = reason.upper()
+                    raise PermissionError(
+                        f"Tool {tool_name} requires user approval. "
+                        f"Approval token verification failed: {reason}"
+                    )
+                
+                # Token verified: mark approval granted in trace context
+                try:
+                    from .trace_context import get_current_context
+                    trace_ctx = get_current_context()
+                    if trace_ctx:
+                        trace_ctx["approval_granted"] = True
+                        trace_ctx["approval_id"] = claims.approval_id if claims else None
+                except Exception:
+                    pass
+                
+                logger.info(
+                    f"[Approval] Token verified for tool {tool_name}: "
+                    f"approval_id={claims.approval_id if claims else 'unknown'}"
+                )
+            elif internal_call:
+                # Internal call: allow (for server-to-server calls)
+                logger.debug(f"[Approval] Internal call allowed for tool {tool_name}")
+            else:
+                # No approval token and not internal call: deny
                 error_code = "APPROVAL_REQUIRED"
                 raise PermissionError(
                     f"Tool {tool_name} requires user approval. "
-                    "Approval must come from trusted context (header x-approval-token or internal call), "
+                    "Approval must come from trusted HTTP header (X-Aklow-Approval-Token), "
                     "not from tool arguments."
                 )
         

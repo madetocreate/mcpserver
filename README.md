@@ -253,12 +253,28 @@ Backend services are configured per tenant in `config/server.yaml`:
 - `crm`: `/mcp/crm` endpoint
 - `support`, `marketing`, `website`, `backoffice`, `onboarding`: Direct workflow endpoints
 
-## Documentation
+## 📚 Documentation
 
-- **[Complete Guide](docs/COMPLETE_GUIDE.md)** - Comprehensive documentation with examples
-- **[Architecture](docs/ARCHITECTURE.md)** - System architecture and design
-- **[Error Handling](docs/ERROR_HANDLING.md)** - Error handling patterns
-- **[Observability](docs/OBSERVABILITY.md)** - Metrics and logging
+**WICHTIG**: Root ist nur "Lobby". Alle weitere Dokumentation gehört nach `/docs`.
+
+- **[Dokumentations-Index](./docs/README.md)** - Vollständiger Überblick über alle Dokumentationen
+- **[Setup & Installation](./docs/README.md#-setup--installation)** - Setup-Anleitungen
+- **[Architecture](./docs/README.md#-architecture)** - System-Architektur
+- **[Operations](./docs/README.md#-operations)** - Operations und Observability
+- **[Security](./docs/README.md#-security)** - Security-Dokumentation
+
+### Dokumentations-Regeln
+
+- **Root-Dateien**: Nur `README.md`, `LICENSE`, `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md` sind erlaubt
+- **Alle anderen Markdown-Dokumente** gehören in `/docs` in die passenden Unterordner:
+  - Setup → `docs/setup/`
+  - Architektur → `docs/architecture/`
+  - Operations → `docs/ops/`
+  - Security → `docs/security/`
+  - Product Features → `docs/product/`
+  - UI/Design → `docs/ui/`
+  - Reports → `docs/reports/`
+- **Ausnahme**: Subsystem-READMEs bleiben beim Code (z.B. `src/*/README.md`)
 
 ## Troubleshooting
 

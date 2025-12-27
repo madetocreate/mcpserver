@@ -38,11 +38,14 @@ def register_dot_alias_tools(mcp: FastMCP, invoke_backend_tool: InvokeBackendToo
         tenant_id: str,
         content: str,
         kind: str = "note",
+        type: Optional[str] = None,
         tags: Optional[list[str]] = None,
         user_approved: bool = False,
         ctx: Any = None,
     ) -> Dict[str, Any]:
         payload = {"content": content, "kind": kind, "tags": tags or [], "user_approved": user_approved}
+        if type:
+            payload["type"] = type
         return await invoke_backend_tool(
             ctx=ctx,
             tool_name="memory_write",

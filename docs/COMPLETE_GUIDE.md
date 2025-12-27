@@ -390,6 +390,33 @@ async with httpx.AsyncClient() as client:
     result = response.json()
 ```
 
+### Memory Write
+
+```python
+response = await client.post(
+    "http://localhost:9000/mcp",
+    json={
+        "method": "tools/call",
+        "params": {
+            "name": "memory_write",
+            "arguments": {
+                "tenant_id": "default",
+                "content": "Customer prefers email communication over phone calls",
+                "kind": "preference",  # MemoryKind: fact|preference|instruction|summary|note
+                "type": "conversation_message",  # MemoryItemType: conversation_message|email|document|..., optional, default: "custom"
+                "tags": ["customer-preference", "communication"],
+                "actor": "memory_curator",
+                "actor_role": "MemoryCurator"
+            }
+        }
+    }
+)
+```
+
+**Parameters:**
+- `kind`: MemoryKind (fact|preference|instruction|summary|note) - Memory-Klasse, default: "note"
+- `type`: MemoryItemType (conversation_message|email|document|...) - Item-Typ/Herkunft, optional, default: "custom"
+
 ### CRM Create Contact (with approval)
 
 ```python

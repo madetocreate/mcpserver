@@ -86,3 +86,18 @@ class InMemoryMetrics:
                     "avg_latency_ms": float(m.avg_latency_ms),
                 }
             return data
+
+
+# Global shared metrics instance (set during server startup)
+_shared_metrics: Optional[InMemoryMetrics] = None
+
+
+def set_shared_metrics(metrics: InMemoryMetrics) -> None:
+    """Set the shared metrics instance (called during server startup)."""
+    global _shared_metrics
+    _shared_metrics = metrics
+
+
+def get_shared_metrics() -> Optional[InMemoryMetrics]:
+    """Get the shared metrics instance."""
+    return _shared_metrics

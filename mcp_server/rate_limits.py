@@ -48,6 +48,8 @@ class AdvancedRateLimiter:
         return ":".join((scope,) + tuple(parts))
 
     def _get_bucket(self, key: str, limit: int) -> LimitBucket:
+        # Note: _get_bucket is called from within check() which is already locked
+        # But for safety, we ensure bucket creation is also protected
         bucket = self._buckets.get(key)
         if bucket is None:
             bucket = LimitBucket(limit=limit, window_seconds=self._window_seconds)
@@ -55,28 +57,30 @@ class AdvancedRateLimiter:
         return bucket
 
     def check(self, tenant_id: str, tool: str, actor: Optional[str] = None) -> None:
-        violations = []
-        tenant_limit = self._per_tenant.get(tenant_id, self._default_per_minute)
-        tenant_bucket = self._get_bucket(self._key("tenant", tenant_id), tenant_limit)
-        reset = tenant_bucket.check_and_increment()
-        if reset > 0:
-            violations.append(reset)
-
-        tool_limit = self._per_tool.get(tool, tenant_limit)
-        tool_bucket = self._get_bucket(self._key("tool", tool), tool_limit)
-        reset = tool_bucket.check_and_increment()
-        if reset > 0:
-            violations.append(reset)
-
-        if actor:
-            actor_bucket = self._get_bucket(self._key("actor", tenant_id, actor), self._per_actor)
-            reset = actor_bucket.check_and_increment()
+        # P0 Fix: Use lock to protect mutating operations (check_and_increment modifies shared state)
+        with self._lock:
+            violations = []
+            tenant_limit = self._per_tenant.get(tenant_id, self._default_per_minute)
+            tenant_bucket = self._get_bucket(self._key("tenant", tenant_id), tenant_limit)
+            reset = tenant_bucket.check_and_increment()
             if reset > 0:
                 violations.append(reset)
 
-        if violations:
-            reset_in = max(violations)
-            raise RateLimitError(
-                f"Rate limit exceeded for tenant={tenant_id} tool={tool}",
-                reset_in_seconds=reset_in,
-            )
+            tool_limit = self._per_tool.get(tool, tenant_limit)
+            tool_bucket = self._get_bucket(self._key("tool", tool), tool_limit)
+            reset = tool_bucket.check_and_increment()
+            if reset > 0:
+                violations.append(reset)
+
+            if actor:
+                actor_bucket = self._get_bucket(self._key("actor", tenant_id, actor), self._per_actor)
+                reset = actor_bucket.check_and_increment()
+                if reset > 0:
+                    violations.append(reset)
+
+            if violations:
+                reset_in = max(violations)
+                raise RateLimitError(
+                    f"Rate limit exceeded for tenant={tenant_id} tool={tool}",
+                    reset_in_seconds=reset_in,
+                )
